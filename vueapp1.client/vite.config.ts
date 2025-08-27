@@ -1,3 +1,5 @@
+/// <reference types="vitest" />
+
 import { fileURLToPath, URL } from 'node:url';
 
 import { defineConfig } from 'vite';
@@ -45,11 +47,17 @@ export default defineConfig({
             '@': fileURLToPath(new URL('./src', import.meta.url))
         }
     },
+    test: {
+        environment: 'jsdom',
+        globals: true,
+        setupFiles: [],
+    },
     server: {
         proxy: {
-            '^/weatherforecast': {
+            '^/api': {
                 target,
-                secure: false
+                secure: false,
+                //changeOrigin: true
             }
         },
         port: parseInt(env.DEV_SERVER_PORT || '57292'),

@@ -7,7 +7,7 @@
             Loading... Please refresh once the ASP.NET backend has started. See <a href="https://aka.ms/jspsintegrationvue">https://aka.ms/jspsintegrationvue</a> for more details.
         </div>
 
-        <div v-if="post" class="content">
+        <div v-if="forecasts.length > 0" class="content">
             <table>
                 <thead>
                     <tr>
@@ -18,7 +18,7 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <tr v-for="forecast in post" :key="forecast.date">
+                    <tr v-for="forecast in forecasts" :key="forecast.date">
                         <td>{{ forecast.date }}</td>
                         <td>{{ forecast.temperatureC }}</td>
                         <td>{{ forecast.temperatureF }}</td>
@@ -30,50 +30,40 @@
     </div>
 </template>
 
-<script lang="ts">
-    import { defineComponent } from 'vue';
+<script setup lang="ts">
+import { ref, onMounted } from 'vue'
 
-    type Forecasts = {
-        date: string,
-        temperatureC: string,
-        temperatureF: string,
-        summary: string
-    }[];
+interface WeatherForecast {
+  date: string
+  temperatureC: number
+  temperatureF: number
+  summary: string | null
+}
 
-    interface Data {
-        loading: boolean,
-        post: null | Forecasts
+const loading = ref(false)
+const forecasts = ref<WeatherForecast[]>([])
+
+const fetchData = async () => {
+  loading.value = true
+  forecasts.value = []
+  
+  try {
+    const response = await fetch('/api/weatherforecast')
+    if (response.ok) {
+      forecasts.value = await response.json()
+    } else {
+      console.error('Failed to fetch weather data:', response.statusText)
     }
+  } catch (error) {
+    console.error('Error fetching weather data:', error)
+  } finally {
+    loading.value = false
+  }
+}
 
-    export default defineComponent({
-        data(): Data {
-            return {
-                loading: false,
-                post: null
-            };
-        },
-        async created() {
-            // fetch the data when the view is created and the data is
-            // already being observed
-            await this.fetchData();
-        },
-        watch: {
-            // call again the method if the route changes
-            '$route': 'fetchData'
-        },
-        methods: {
-            async fetchData() {
-                this.post = null;
-                this.loading = true;
-
-                var response = await fetch('weatherforecast');
-                if (response.ok) {
-                    this.post = await response.json();
-                    this.loading = false;
-                }
-            }
-        },
-    });
+onMounted(() => {
+  fetchData()
+})
 </script>
 
 <style scoped>

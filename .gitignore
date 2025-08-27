@@ -19,11 +19,20 @@ bld/
 [Oo]bj/
 [Ll]og/
 [Ll]ogs/
+**/[Bb]in/
+**/[Oo]bj/
+**/[Dd]ebug/
+**/[Rr]elease/
 
 # .NET
 project.lock.json
 project.fragment.lock.json
 artifacts/
+*.nuget.props
+*.nuget.targets
+*.g.props
+*.g.targets
+*.g.cs
 
 # Node
 node_modules/
@@ -37,8 +46,6 @@ dist-ssr/
 *.local
 
 # Editor directories and files
-.vscode/*
-!.vscode/extensions.json
 .idea
 .DS_Store
 *.swp
