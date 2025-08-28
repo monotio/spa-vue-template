@@ -52,11 +52,32 @@ cd VueApp1.Server
 dotnet publish -c Release
 ```
 
-### Run Unit Tests
+## Testing
 
-```sh
+### Backend Tests (.NET)
+
+```bash
+# Run all .NET tests from solution root
+dotnet test
+
+# Or run specific test project
+dotnet test VueApp1.Server.Tests/VueApp1.Server.Tests.csproj
+
+# Run with detailed output
+dotnet test --logger "console;verbosity=detailed"
+```
+
+### Frontend Tests (Vue)
+
+```bash
+# Run all Vue tests
+cd vueapp1.client
 npm run test
-# or with UI
+
+# Run tests in watch mode
+npm run test:watch
+
+# Run tests with UI
 npm run test:ui
 ```
 
@@ -68,9 +89,13 @@ npm run test:ui
 │   ├── Program.cs            # Application entry point
 │   └── appsettings.json      # Configuration
 │
+├── VueApp1.Server.Tests/     # .NET Backend Tests
+│   └── WeatherForecastControllerTests.cs
+│
 └── vueapp1.client/           # Vue 3 Frontend
     ├── src/
     │   ├── components/       # Vue components
+    │   │   └── __tests__/    # Component tests
     │   ├── assets/           # Static assets
     │   └── main.ts           # App entry point
     ├── vite.config.ts        # Vite configuration
@@ -85,6 +110,9 @@ npm run test:ui
 - `npm run preview` - Preview production build
 - `npm run type-check` - Run TypeScript type checking
 - `npm run lint` - Lint and fix code
+- `npm run test` - Run unit tests with Vitest
+- `npm run test:watch` - Run tests in watch mode
+- `npm run test:ui` - Run tests with interactive UI
 
 ### Backend
 - `dotnet run` - Run development server
