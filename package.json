@@ -1,0 +1,15 @@
+{
+  "private": true,
+  "scripts": {
+    "dev:client": "npm --prefix vueapp1.client run dev",
+    "dev:server": "dotnet run --project VueApp1.Server",
+    "build": "dotnet build && npm --prefix vueapp1.client run build",
+    "test": "npm --prefix vueapp1.client run test && dotnet test",
+    "lint": "npm --prefix vueapp1.client run lint",
+    "lint:check": "npm --prefix vueapp1.client run lint:check",
+    "format": "npm --prefix vueapp1.client run format",
+    "format:check": "npm --prefix vueapp1.client run format:check",
+    "type-check": "npm --prefix vueapp1.client run type-check",
+    "check": "npm --prefix vueapp1.client run check && dotnet build && dotnet test"
+  }
+}
