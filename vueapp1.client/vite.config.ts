@@ -10,9 +10,9 @@ import child_process from 'child_process';
 import { env } from 'process';
 
 const baseFolder =
-  env.APPDATA !== undefined && env.APPDATA !== ''
-    ? `${env.APPDATA}/ASP.NET/https`
-    : `${env.HOME}/.aspnet/https`;
+  env['APPDATA'] !== undefined && env['APPDATA'] !== ''
+    ? `${env['APPDATA']}/ASP.NET/https`
+    : `${env['HOME']}/.aspnet/https`;
 
 const certificateName = 'vueapp1.client';
 const certFilePath = path.join(baseFolder, `${certificateName}.pem`);
@@ -35,10 +35,10 @@ if (!fs.existsSync(certFilePath) || !fs.existsSync(keyFilePath)) {
   }
 }
 
-const target = env.ASPNETCORE_HTTPS_PORT
-  ? `https://localhost:${env.ASPNETCORE_HTTPS_PORT}`
-  : env.ASPNETCORE_URLS
-    ? env.ASPNETCORE_URLS.split(';')[0]
+const target = env['ASPNETCORE_HTTPS_PORT']
+  ? `https://localhost:${env['ASPNETCORE_HTTPS_PORT']}`
+  : env['ASPNETCORE_URLS']
+    ? env['ASPNETCORE_URLS'].split(';')[0]
     : 'https://localhost:7191';
 
 // https://vitejs.dev/config/
@@ -51,18 +51,36 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
-    globals: true,
-    setupFiles: [],
+    clearMocks: true,
+    restoreMocks: true,
+    setupFiles: ['./src/test/setup.ts'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'lcov'],
+      include: [
+        'src/composables/**/*.ts',
+        'src/contracts/**/*.ts',
+        'src/services/**/*.ts',
+        'src/stores/**/*.ts',
+        'src/utils/**/*.ts',
+      ],
+      exclude: ['src/**/__tests__/**'],
+      thresholds: {
+        lines: 85,
+        functions: 85,
+        statements: 85,
+        branches: 80,
+      },
+    },
   },
   server: {
     proxy: {
       '^/api': {
         target,
         secure: false,
-        //changeOrigin: true
       },
     },
-    port: parseInt(env.DEV_SERVER_PORT || '57292'),
+    port: parseInt(env['DEV_SERVER_PORT'] ?? '57292'),
     https: {
       key: fs.readFileSync(keyFilePath),
       cert: fs.readFileSync(certFilePath),

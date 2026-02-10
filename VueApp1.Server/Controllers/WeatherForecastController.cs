@@ -1,28 +1,18 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.OutputCaching;
+using VueApp1.Server.Services;
 
 namespace VueApp1.Server.Controllers;
 
-[ApiController]
-[Route("api/[controller]")]
-public class WeatherForecastController(ILogger<WeatherForecastController> logger) : ControllerBase
+public class WeatherForecastController(IWeatherForecastService weatherService) : ApiControllerBase
 {
-    private static readonly string[] Summaries =
-    [
-        "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-    ];
-
     [HttpGet]
-    [ProducesResponseType<IEnumerable<WeatherForecast>>(StatusCodes.Status200OK)]
-    public ActionResult<IEnumerable<WeatherForecast>> GetWeatherForecasts()
+    [OutputCache(PolicyName = "api-read")]
+    [ProducesResponseType<IReadOnlyList<WeatherForecast>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<IReadOnlyList<WeatherForecast>>> GetWeatherForecasts(
+        CancellationToken cancellationToken)
     {
-        logger.LogInformation("Getting weather forecast");
-        
-        var forecasts = Enumerable.Range(1, 5).Select(index => new WeatherForecast(
-            Date: DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            TemperatureC: Random.Shared.Next(-20, 55),
-            Summary: Summaries[Random.Shared.Next(Summaries.Length)]
-        ));
-
-        return Ok(forecasts);
+        var response = await weatherService.GetForecastsAsync(cancellationToken);
+        return HandleServiceResponse(response);
     }
 }

@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: npm
+          cache-dependency-path: vueapp1.client/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix vueapp1.client
+
+      - name: Restore .NET packages
+        run: dotnet restore
+
+      - name: Lint
+        run: npm run lint:check
+
+      - name: Format
+        run: npm run format:check
+
+      - name: Type check
+        run: npm run type-check
+
+      - name: Frontend tests
+        run: npm --prefix vueapp1.client run test:coverage
+
+      - name: Build
+        run: npm run build
+
+      - name: OpenAPI contract check
+        run: npm run openapi:check
+
+      - name: Backend unit tests
+        run: dotnet test VueApp1.Server.UnitTests/VueApp1.Server.UnitTests.csproj --no-build
+
+      - name: Backend integration tests with coverage gate
+        run: >
+          dotnet test VueApp1.Server.IntegrationTests/VueApp1.Server.IntegrationTests.csproj --no-build
+          /p:CollectCoverage=true
+          /p:CoverletOutputFormat=opencover
+          "/p:Exclude=[*.Tests]*"
+          /p:Threshold=20
+          /p:ThresholdType=line
+          /p:ThresholdStat=total

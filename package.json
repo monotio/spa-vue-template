@@ -5,11 +5,14 @@
     "dev:server": "dotnet run --project VueApp1.Server",
     "build": "dotnet build && npm --prefix vueapp1.client run build",
     "test": "npm --prefix vueapp1.client run test && dotnet test",
+    "test:load": "node scripts/load-test.mjs",
     "lint": "npm --prefix vueapp1.client run lint",
     "lint:check": "npm --prefix vueapp1.client run lint:check",
     "format": "npm --prefix vueapp1.client run format",
     "format:check": "npm --prefix vueapp1.client run format:check",
     "type-check": "npm --prefix vueapp1.client run type-check",
-    "check": "npm --prefix vueapp1.client run check && dotnet build && dotnet test"
+    "openapi:sync": "node scripts/openapi-contract.mjs --write",
+    "openapi:check": "node scripts/openapi-contract.mjs --check",
+    "check": "npm --prefix vueapp1.client run check && dotnet build && npm run openapi:check && dotnet test"
   }
 }

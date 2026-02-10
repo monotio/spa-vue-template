@@ -1,0 +1,45 @@
+name: Build Provenance
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  id-token: write
+  attestations: write
+  contents: read
+
+jobs:
+  attest-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: vueapp1.client/package.json
+          cache: npm
+          cache-dependency-path: vueapp1.client/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix vueapp1.client
+
+      - name: Build frontend
+        run: npm --prefix vueapp1.client run build
+
+      - name: Publish backend
+        run: dotnet publish VueApp1.Server -c Release -o out/server
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            out/server/**
+            vueapp1.client/dist/**

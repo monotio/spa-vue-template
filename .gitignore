@@ -59,6 +59,10 @@ dist-ssr/
 # Test coverage
 coverage/
 *.lcov
+coverage.opencover.xml
+**/TestResults/
+*.trx
+**/Sequence_*.xml
 
 # Package manager locks (keep one)
 # package-lock.json

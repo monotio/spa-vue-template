@@ -1,130 +1,85 @@
-# Vue 3 + .NET 9 SPA Template
+# .NET 10 + Vue 3 SPA Template
 
-A modern single-page application template with Vue 3 frontend and .NET 9 backend.
+Production-oriented full-stack template for SPAs in 2026+: Vue 3 + TypeScript frontend and ASP.NET Core backend, with strict lint/type/test gates.
 
-## Features
+## Tech Stack
 
-- **Frontend**: Vue 3 with Composition API (script setup)
-- **Backend**: .NET 9 with C# 12 features
-- **Build Tools**: Vite 7 with HMR
-- **TypeScript**: Full TypeScript support with strict mode
-- **Modern Syntax**: Records, primary constructors, collection expressions
-- **API**: RESTful API with OpenAPI support
-- **Development**: Vue DevTools integration
+- Frontend: Vue 3, TypeScript, Vite 7, Vitest, Pinia, Vue Router
+- Backend: ASP.NET Core (.NET 10), C# latest, OpenAPI, ProblemDetails
+- Quality: ESLint flat config, Prettier, strict TS config, xUnit v3, CI checks
 
 ## Prerequisites
 
-- [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
-- [Node.js 20.19+ or 22.12+](https://nodejs.org/)
+- .NET SDK pinned by `global.json`
+- Node.js 22.12+
 
-## Getting Started
-
-### Install dependencies
-```bash
-cd vueapp1.client
-npm install
-```
-
-### Development
-
-Run both frontend and backend:
-```bash
-# Terminal 1: Start .NET backend
-cd VueApp1.Server
-dotnet run
-
-# Terminal 2: Start Vue dev server
-cd vueapp1.client
-npm run dev
-```
-
-Or use Visual Studio / VS Code launch configurations.
-
-### Build for Production
+## Quick Start
 
 ```bash
-# Build Vue app
-cd vueapp1.client
-npm run build
-
-# Build .NET app
-cd VueApp1.Server
-dotnet publish -c Release
+npm ci --prefix vueapp1.client
+dotnet restore
+npm run check
 ```
 
-## Testing
+## Daily Commands
 
-### Backend Tests (.NET)
+Run from repo root.
 
 ```bash
-# Run all .NET tests from solution root
-dotnet test
+npm run dev:server      # Start backend (https://localhost:7191)
+npm run dev:client      # Start Vite dev server (https://localhost:57292)
 
-# Or run specific test project
-dotnet test VueApp1.Server.Tests/VueApp1.Server.Tests.csproj
+npm run check           # Full validation used before commit
+npm run build           # Build backend + frontend
+npm run test            # Frontend tests + backend tests
+npm run test:load       # Local sustained-load smoke test
 
-# Run with detailed output
-dotnet test --logger "console;verbosity=detailed"
+npm run openapi:sync    # Generate docs/openapi/openapi.v1.json baseline
+npm run openapi:check   # Verify runtime contract matches baseline
 ```
 
-### Frontend Tests (Vue)
+## Project Layout
 
-```bash
-# Run all Vue tests
-cd vueapp1.client
-npm run test
-
-# Run tests in watch mode
-npm run test:watch
-
-# Run tests with UI
-npm run test:ui
+```text
+VueApp1.Server/                    ASP.NET Core API
+VueApp1.Server.UnitTests/          Fast unit tests
+VueApp1.Server.IntegrationTests/   End-to-end API pipeline tests
+vueapp1.client/                    Vue app
+scripts/                           OpenAPI + load test tooling
 ```
 
-## Project Structure
+## Backend Design
 
-```
-├── VueApp1.Server/           # .NET 9 Backend
-│   ├── Controllers/          # API Controllers
-│   ├── Program.cs            # Application entry point
-│   └── appsettings.json      # Configuration
-│
-├── VueApp1.Server.Tests/     # .NET Backend Tests
-│   └── WeatherForecastControllerTests.cs
-│
-└── vueapp1.client/           # Vue 3 Frontend
-    ├── src/
-    │   ├── components/       # Vue components
-    │   │   └── __tests__/    # Component tests
-    │   ├── assets/           # Static assets
-    │   └── main.ts           # App entry point
-    ├── vite.config.ts        # Vite configuration
-    └── tsconfig.json         # TypeScript configuration
-```
+- Controller + service separation (`ServiceResponse<T>` for consistent outcomes)
+- RFC 9457 ProblemDetails enabled globally
+- Health endpoint at `/health`
+- Server-Timing middleware for API request timing visibility
+- Performance config in `appsettings.json` for:
+  - output cache
+  - rate limiting
+  - request timeout policy toggle
+- OpenAPI endpoint available in Development and when `OpenApi:Enabled=true`
 
-## Available Scripts
+## Frontend Design
 
-### Frontend
-- `npm run dev` - Start dev server with HMR
-- `npm run build` - Build for production
-- `npm run preview` - Preview production build
-- `npm run type-check` - Run TypeScript type checking
-- `npm run lint` - Lint and fix code
-- `npm run test` - Run unit tests with Vitest
-- `npm run test:watch` - Run tests in watch mode
-- `npm run test:ui` - Run tests with interactive UI
+- Strict TypeScript enabled (`exactOptionalPropertyTypes`, `noImplicitOverride`, `noUnused*`)
+- API access centralized via composables/services (direct `fetch` restricted by lint rule)
+- Feature-oriented structure (`pages`, `stores`, `services`, `composables`, `contracts`, `utils`)
+- Coverage thresholds enforced in Vitest config
 
-### Backend
-- `dotnet run` - Run development server
-- `dotnet build` - Build the project
-- `dotnet publish` - Publish for deployment
-- `dotnet test` - Run tests
+## OpenAPI Contract Workflow
 
-## API Documentation
+`openapi-contract.mjs` starts the backend in `Testing`, fetches `/openapi/v1.json`, and compares it with `docs/openapi/openapi.v1.json`.
 
-When running in development, OpenAPI documentation is available at:
-- https://localhost:7191/openapi/v1.json
+- Use `npm run openapi:sync` when API contracts intentionally change
+- CI uses `npm run openapi:check` to fail on uncommitted contract drift
 
-## License
+## CI Gates
 
-MIT
+CI runs:
+
+- frontend lint + format + type-check + tests
+- frontend/backend build
+- OpenAPI contract drift check
+- backend unit tests
+- backend integration tests with a coverage floor on server code

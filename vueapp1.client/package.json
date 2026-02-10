@@ -17,18 +17,21 @@
     "format": "prettier --cache --write .",
     "format:check": "prettier --cache --check .",
     "test": "vitest --run",
+    "test:coverage": "vitest --run --coverage",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "check": "npm run lint:check && npm run format:check && npm run type-check && npm run test"
   },
   "dependencies": {
     "pinia": "^3.0.4",
-    "vue": "^3.5.28"
+    "vue": "^3.5.28",
+    "vue-router": "^5.0.2"
   },
   "devDependencies": {
     "@tsconfig/node22": "^22.0.5",
     "@types/node": "^24.10.12",
     "@vitejs/plugin-vue": "^6.0.4",
+    "@vitest/coverage-v8": "^4.0.18",
     "@vue/eslint-config-typescript": "^14.6.0",
     "@vue/test-utils": "^2.4.6",
     "@vue/tsconfig": "^0.8.1",
