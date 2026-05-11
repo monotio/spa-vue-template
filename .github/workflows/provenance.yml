@@ -38,7 +38,7 @@ jobs:
         run: dotnet publish VueApp1.Server -c Release -o out/server
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             out/server/**
