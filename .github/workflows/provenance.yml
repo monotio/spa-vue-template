@@ -24,7 +24,9 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version-file: vueapp1.client/package.json
+          # .nvmrc is the single source of truth for the CI Node version
+          # (reading engines from package.json resolves differently than ci.yml did — drift bug).
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: vueapp1.client/package-lock.json
 
