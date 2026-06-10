@@ -27,4 +27,9 @@
     <ProjectReference Include="..\VueApp1.Server\VueApp1.Server.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- longRunningTestSeconds surfaces hung tests in CI logs before the runner times out. -->
+    <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

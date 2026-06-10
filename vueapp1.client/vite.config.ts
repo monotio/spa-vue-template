@@ -36,6 +36,8 @@ if (!fs.existsSync(certFilePath) || !fs.existsSync(keyFilePath)) {
   }
 }
 
+const isCI = env['CI'] !== undefined && env['CI'] !== '' && env['CI'] !== 'false';
+
 const target = env['ASPNETCORE_HTTPS_PORT']
   ? `https://localhost:${env['ASPNETCORE_HTTPS_PORT']}`
   : env['ASPNETCORE_URLS']
@@ -90,6 +92,18 @@ export default defineConfig({
     clearMocks: true,
     restoreMocks: true,
     setupFiles: ['./src/test/setup.ts'],
+    // Pins TZ to a non-UTC zone so timezone bugs surface in tests.
+    globalSetup: './vitest.global-setup.ts',
+    // CI runners are typically 3-5x slower than dev machines; default
+    // timeouts commonly flake there. Locally, fail fast.
+    testTimeout: isCI ? 15_000 : 5_000,
+    hookTimeout: isCI ? 15_000 : 10_000,
+    environmentOptions: {
+      jsdom: {
+        // Stable window.location for assertions and relative-URL resolution.
+        url: 'http://localhost:3000',
+      },
+    },
     coverage: {
       provider: 'v8',
       // json-summary feeds badges/size-delta tooling; cobertura merges with the
