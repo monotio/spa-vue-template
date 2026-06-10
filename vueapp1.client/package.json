@@ -23,7 +23,8 @@
     "check": "npm run lint:check && npm run format:check && npm run type-check && npm run test",
     "test:ci": "vitest run --coverage --reporter=junit --reporter=default --outputFile=test-results/vitest-results.xml",
     "rebuild-trusted": "npm rebuild --ignore-scripts=false fsevents sharp",
-    "generate-pwa-assets": "pwa-assets-generator --preset minimal-2023 public/logo.svg"
+    "generate-pwa-assets": "pwa-assets-generator --preset minimal-2023 public/logo.svg",
+    "check:fast": "run-p lint:check format:check type-check test"
   },
   "dependencies": {
     "pinia": "^3.0.4",

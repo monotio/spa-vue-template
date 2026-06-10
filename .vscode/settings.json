@@ -1,0 +1,13 @@
+{
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "[csharp]": {
+    "editor.defaultFormatter": "ms-dotnettools.csharp"
+  },
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true,
+  "eslint.useFlatConfig": true,
+  "eslint.workingDirectories": ["vueapp1.client"],
+  "prettier.prettierPath": "vueapp1.client/node_modules/prettier",
+  "typescript.tsdk": "vueapp1.client/node_modules/typescript/lib"
+}

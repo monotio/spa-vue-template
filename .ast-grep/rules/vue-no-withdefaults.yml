@@ -1,0 +1,9 @@
+id: vue-no-withdefaults
+language: ts
+severity: error
+message: Use reactive props destructure instead of withDefaults (Vue 3.5+)
+note: |
+  BAD:  const props = withDefaults(defineProps<Props>(), { count: 1 });
+  GOOD: const { count = 1 } = defineProps<Props>();
+rule:
+  pattern: withDefaults(defineProps<$T>(), $DEFAULTS)

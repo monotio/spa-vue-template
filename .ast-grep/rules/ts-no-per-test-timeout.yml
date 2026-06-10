@@ -1,0 +1,15 @@
+id: ts-no-per-test-timeout
+language: ts
+severity: error
+message: Never widen a per-test timeout to fix a flake — fix the non-deterministic wait
+note: |
+  Widened budgets never fixed a flake; they just slow the red build. See
+  docs/TESTING.md anti-flake doctrine (Class T triage).
+  BAD:  it('works', async () => { ... }, 20_000);
+  GOOD: deterministic settle: await vi.advanceTimersByTimeAsync(ms); await nextTick();
+files:
+  - vueapp1.client/src/**/__tests__/**
+rule:
+  any:
+    - pattern: it($DESC, $FN, $TIMEOUT)
+    - pattern: test($DESC, $FN, $TIMEOUT)

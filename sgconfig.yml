@@ -1,0 +1,25 @@
+# ast-grep configuration — OPT-IN guardrail layer (not wired into `npm run
+# check` or CI by default; see docs/AST_GREP_GUIDE.md for one-line adoption).
+ruleDirs:
+  - .ast-grep/rules
+
+# Parse .vue files as HTML, then inject TypeScript inside <script> blocks so
+# TS rules reach into SFCs (ast-grep's built-in injection covers JS/CSS only).
+languageGlobs:
+  html: ['**/*.vue']
+
+languageInjections:
+  - hostLanguage: html
+    rule:
+      pattern: |
+        <script setup lang="ts">
+          $CONTENT
+        </script>
+    injected: ts
+  - hostLanguage: html
+    rule:
+      pattern: |
+        <script lang="ts" setup>
+          $CONTENT
+        </script>
+    injected: ts

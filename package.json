@@ -4,7 +4,7 @@
     "dev:client": "npm --prefix vueapp1.client run dev",
     "dev:server": "dotnet run --project VueApp1.Server",
     "build": "dotnet build && npm --prefix vueapp1.client run build",
-    "test": "npm --prefix vueapp1.client run test && node scripts/run-dotnet-test.mjs --no-build",
+    "test": "node scripts/run-vitest.mjs && node scripts/run-dotnet-test.mjs --no-build",
     "test:load": "node scripts/load-test.mjs",
     "lint": "npm --prefix vueapp1.client run lint",
     "lint:check": "npm --prefix vueapp1.client run lint:check",
@@ -14,6 +14,11 @@
     "openapi:sync": "node scripts/openapi-contract.mjs --write",
     "openapi:check": "node scripts/openapi-contract.mjs --check",
     "check": "npm --prefix vueapp1.client run check && dotnet build && npm run openapi:check && node scripts/run-dotnet-test.mjs --no-build",
-    "test:backend": "node scripts/run-dotnet-test.mjs"
+    "test:backend": "node scripts/run-dotnet-test.mjs",
+    "install-githooks": "git config core.hooksPath .githooks",
+    "setup": "npm run install-githooks && npm ci --prefix vueapp1.client && npm --prefix vueapp1.client run rebuild-trusted && dotnet restore --locked-mode && dotnet tool restore",
+    "build-server-shutdown": "dotnet build-server shutdown",
+    "test:frontend": "node scripts/run-vitest.mjs",
+    "check:fast": "npm --prefix vueapp1.client run check:fast && dotnet build && npm run openapi:check && node scripts/run-dotnet-test.mjs --no-build"
   }
 }
