@@ -24,6 +24,8 @@ jobs:
         uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -36,7 +38,9 @@ jobs:
         run: npm ci --prefix vueapp1.client
 
       - name: Restore .NET packages
-        run: dotnet restore
+        # --locked-mode fails the build if packages.lock.json is out of sync with the
+        # project files instead of silently resolving different package versions.
+        run: dotnet restore --locked-mode
 
       - name: Lint
         run: npm run lint:check

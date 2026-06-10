@@ -1,0 +1,51 @@
+<Project>
+
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <!--
+      Pin transitive package versions too: a poisoned or yanked transitive minor
+      cannot float into the build without an explicit, reviewable version change here.
+    -->
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- ASP.NET Core packages track the runtime servicing band — bump together with the SDK. -->
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.9" />
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.9" />
+    <PackageVersion Include="Microsoft.AspNetCore.SpaProxy" Version="10.0.9" />
+    <!--
+      Keep all OpenTelemetry.* packages at or above these versions: 1.15.0 carried
+      four published advisories (GHSA-4625-4j76-fww9 and friends).
+    -->
+    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
+    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.2" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.15.1" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.15.1" />
+    <PackageVersion Include="Scalar.AspNetCore" Version="2.16.2" />
+  </ItemGroup>
+
+  <ItemGroup Label="Test packages">
+    <!--
+      coverlet.msbuild powers the CI coverage threshold gate (/p:Threshold);
+      coverlet.collector is the "XPlat Code Coverage" data-collector path. Both are
+      kept until the gate moves to a runsettings-based collector setup.
+    -->
+    <PackageVersion Include="coverlet.collector" Version="10.0.1" />
+    <PackageVersion Include="coverlet.msbuild" Version="10.0.1" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.6.0" />
+    <PackageVersion Include="Moq" Version="4.20.72" />
+    <PackageVersion Include="xunit.v3" Version="3.2.2" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
+  </ItemGroup>
+
+  <!--
+    Trap to avoid: Microsoft.OpenApi must stay on 2.x. ASP.NET Core 10's OpenAPI
+    support compiles against the 2.x API surface, while outdated-package tooling
+    happily suggests 3.x. It is intentionally NOT listed here (it flows transitively
+    from Microsoft.AspNetCore.OpenApi); if you ever need a direct reference, pin a 2.x
+    version and configure Dependabot to ignore its majors.
+  -->
+
+</Project>
