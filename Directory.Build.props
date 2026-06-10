@@ -8,6 +8,15 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <!--
+      NuGet audit policy: with TreatWarningsAsErrors=true, every NU190x advisory warning
+      becomes a restore ERROR. Auditing all (direct + transitive) packages is right for a
+      template, but blocking on *moderate* advisories means the repo breaks for everyone
+      the day any dependency gets a moderate CVE. Block on high/critical only; rely on
+      Dependabot to roll out fixes for moderates.
+    -->
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <NuGetAuditLevel>high</NuGetAuditLevel>
   </PropertyGroup>
 
 </Project>
