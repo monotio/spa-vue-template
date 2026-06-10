@@ -1,0 +1,26 @@
+{
+  "name": "VueApp1",
+  "image": "mcr.microsoft.com/devcontainers/dotnet:10.0",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "24"
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "postCreateCommand": "npm run setup && dotnet dev-certs https",
+  "forwardPorts": [7191, 57292],
+  "portsAttributes": {
+    "7191": { "label": "API (https)", "protocol": "https" },
+    "57292": { "label": "Vite dev server", "protocol": "https" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "Vue.volar",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-dotnettools.csdevkit"
+      ]
+    }
+  }
+}

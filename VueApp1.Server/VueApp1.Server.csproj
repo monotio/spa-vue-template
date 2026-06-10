@@ -13,6 +13,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
     <PackageReference Include="Microsoft.AspNetCore.SpaProxy" />
+    <PackageReference Include="Microsoft.Extensions.Caching.Hybrid" />
     <PackageReference Include="NetEscapades.AspNetCore.SecurityHeaders" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
@@ -24,7 +25,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\vueapp1.client\vueapp1.client.esproj">
+    <!-- VS launch ordering + SpaProxy wiring. Container builds pass
+         ExcludeSpaReference=true: the SPA is built in its own image stage,
+         and the static-web-assets pipeline would otherwise demand Node.js
+         when evaluating the esproj during publish. -->
+    <ProjectReference Include="..\vueapp1.client\vueapp1.client.esproj"
+                      Condition="'$(ExcludeSpaReference)' != 'true'">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
   </ItemGroup>

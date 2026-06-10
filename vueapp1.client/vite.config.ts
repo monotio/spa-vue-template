@@ -10,30 +10,37 @@ import path from 'path';
 import child_process from 'child_process';
 import { env } from 'process';
 
-const baseFolder =
-  env['APPDATA'] !== undefined && env['APPDATA'] !== ''
-    ? `${env['APPDATA']}/ASP.NET/https`
-    : `${env['HOME']}/.aspnet/https`;
+// Dev-server HTTPS uses the ASP.NET Core dev cert. Only invoked for
+// `vite` (serve) — production builds (incl. Docker, where no dotnet
+// exists) must never require a cert or the SDK.
+function ensureDevCertificate(): { certFilePath: string; keyFilePath: string } {
+  const baseFolder =
+    env['APPDATA'] !== undefined && env['APPDATA'] !== ''
+      ? `${env['APPDATA']}/ASP.NET/https`
+      : `${env['HOME']}/.aspnet/https`;
 
-const certificateName = 'vueapp1.client';
-const certFilePath = path.join(baseFolder, `${certificateName}.pem`);
-const keyFilePath = path.join(baseFolder, `${certificateName}.key`);
+  const certificateName = 'vueapp1.client';
+  const certFilePath = path.join(baseFolder, `${certificateName}.pem`);
+  const keyFilePath = path.join(baseFolder, `${certificateName}.key`);
 
-if (!fs.existsSync(baseFolder)) {
-  fs.mkdirSync(baseFolder, { recursive: true });
-}
-
-if (!fs.existsSync(certFilePath) || !fs.existsSync(keyFilePath)) {
-  if (
-    0 !==
-    child_process.spawnSync(
-      'dotnet',
-      ['dev-certs', 'https', '--export-path', certFilePath, '--format', 'Pem', '--no-password'],
-      { stdio: 'inherit' },
-    ).status
-  ) {
-    throw new Error('Could not create certificate.');
+  if (!fs.existsSync(baseFolder)) {
+    fs.mkdirSync(baseFolder, { recursive: true });
   }
+
+  if (!fs.existsSync(certFilePath) || !fs.existsSync(keyFilePath)) {
+    if (
+      0 !==
+      child_process.spawnSync(
+        'dotnet',
+        ['dev-certs', 'https', '--export-path', certFilePath, '--format', 'Pem', '--no-password'],
+        { stdio: 'inherit' },
+      ).status
+    ) {
+      throw new Error('Could not create certificate.');
+    }
+  }
+
+  return { certFilePath, keyFilePath };
 }
 
 const isCI = env['CI'] !== undefined && env['CI'] !== '' && env['CI'] !== 'false';
@@ -45,7 +52,7 @@ const target = env['ASPNETCORE_HTTPS_PORT']
     : 'https://localhost:7191';
 
 // https://vitejs.dev/config/
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [
     plugin(),
     VitePWA({
@@ -133,9 +140,15 @@ export default defineConfig({
       },
     },
     port: parseInt(env['DEV_SERVER_PORT'] ?? '57292'),
-    https: {
-      key: fs.readFileSync(keyFilePath),
-      cert: fs.readFileSync(certFilePath),
-    },
+    // The cert is only ensured/read when actually serving — builds (incl.
+    // Docker) and vitest never touch dotnet dev-certs.
+    ...(command === 'serve' ? { https: toHttpsOptions(ensureDevCertificate()) } : {}),
   },
-});
+}));
+
+function toHttpsOptions(certificate: { certFilePath: string; keyFilePath: string }) {
+  return {
+    key: fs.readFileSync(certificate.keyFilePath),
+    cert: fs.readFileSync(certificate.certFilePath),
+  };
+}

@@ -23,6 +23,8 @@
     <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.2" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.15.1" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.15.1" />
+    <!-- Unified L1 (in-memory) + optional L2 (distributed) cache with stampede protection. -->
+    <PackageVersion Include="Microsoft.Extensions.Caching.Hybrid" Version="10.7.0" />
     <!-- De facto standard security headers middleware; ASP.NET Core ships none. -->
     <PackageVersion Include="NetEscapades.AspNetCore.SecurityHeaders" Version="1.3.1" />
     <PackageVersion Include="Scalar.AspNetCore" Version="2.16.2" />

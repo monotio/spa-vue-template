@@ -1,6 +1,21 @@
-@VueApp1.Server_HostAddress = http://localhost:5128
+@HostAddress = https://localhost:7191
 
-GET {{VueApp1.Server_HostAddress}}/weatherforecast/
+# Weather forecasts (HybridCache 30s beneath the output-cache policy)
+GET {{HostAddress}}/api/weatherforecast
 Accept: application/json
 
 ###
+
+# Health check
+GET {{HostAddress}}/health
+
+###
+
+# RFC 9457 ProblemDetails for unknown API routes
+GET {{HostAddress}}/api/does-not-exist
+Accept: application/json
+
+###
+
+# API catalog (RFC 9727; Development or OpenApi:Enabled=true)
+GET {{HostAddress}}/.well-known/api-catalog

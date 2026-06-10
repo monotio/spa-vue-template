@@ -62,6 +62,12 @@ static void SetupApi(WebApplicationBuilder builder)
     builder.Services.AddExceptionHandler<ApiProblemDetailsExceptionHandler>();
     builder.Services.AddProblemDetails();
     builder.Services.AddSingleton(TimeProvider.System);
+    // HybridCache: in-process L1 with stampede protection; add a distributed
+    // L2 by registering IDistributedCache (e.g. AddStackExchangeRedisCache) —
+    // HybridCache picks it up automatically. Rule of thumb: L1 expiry ~1/6 of L2.
+    builder.Services.AddHybridCache();
+    // Outbound HTTP with retries/timeouts/circuit-breaker when you add a client:
+    // builder.Services.AddHttpClient("backend").AddStandardResilienceHandler();
     builder.Services.AddScoped<IWeatherForecastService, WeatherForecastService>();
     // Host-header-injection-safe absolute links (emails, notifications):
     // generated from the configured PublicUri, never from request headers.

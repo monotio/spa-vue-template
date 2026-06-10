@@ -27,3 +27,7 @@ coverage
 
 *.tsbuildinfo
 test-results
+
+# Vite config compilation artifacts
+*.timestamp-*.mjs
+vite.config.ts.timestamp-*

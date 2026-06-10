@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Caching.Hybrid;
+using Microsoft.Extensions.DependencyInjection;
 using VueApp1.Server.Services;
 using Xunit;
 
@@ -6,7 +8,13 @@ namespace VueApp1.Server.UnitTests.Services;
 public class WeatherForecastServiceTests
 {
     private static readonly DateTimeOffset _testNow = new(2026, 2, 9, 12, 0, 0, TimeSpan.Zero);
-    private readonly WeatherForecastService _service = new(new FixedTimeProvider(_testNow));
+    private readonly WeatherForecastService _service = new(new FixedTimeProvider(_testNow), CreateCache());
+
+    // HybridCache has no public constructor — resolve a real instance from DI.
+    private static HybridCache CreateCache() => new ServiceCollection()
+        .AddHybridCache().Services
+        .BuildServiceProvider()
+        .GetRequiredService<HybridCache>();
 
     [Fact]
     public async Task GetForecastsAsync_ReturnsSuccess_WithFiveForecasts()
