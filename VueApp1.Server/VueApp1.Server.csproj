@@ -4,6 +4,10 @@
     <SpaRoot>..\vueapp1.client</SpaRoot>
     <SpaProxyLaunchCommand>npm run dev</SpaProxyLaunchCommand>
     <SpaProxyServerUrl>https://localhost:57292</SpaProxyServerUrl>
+    <!-- Flow XML doc comments into the generated OpenAPI document (and Scalar UI).
+         CS1591 (missing XML comment) stays off — document what helps, not everything. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -16,6 +20,7 @@
     <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
     <PackageReference Include="Scalar.AspNetCore" />
+    <PackageReference Include="Scalar.AspNetCore.Microsoft" />
   </ItemGroup>
 
   <ItemGroup>

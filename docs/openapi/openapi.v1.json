@@ -1,16 +1,24 @@
 {
   "openapi": "3.1.1",
   "info": {
-    "title": "VueApp1.Server | v1",
+    "title": "VueApp1 API",
+    "description": "RFC 9457 problem details on every error; see /scalar/v1 for interactive docs.",
     "version": "1.0.0"
   },
-  "servers": [
-    {
-      "url": "http://127.0.0.1:5199/"
-    }
-  ],
   "paths": {
-    "/api/WeatherForecast": {
+    "/.well-known/api-catalog": {
+      "get": {
+        "tags": [
+          "VueApp1.Server"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/weatherforecast": {
       "get": {
         "tags": [
           "WeatherForecast"
@@ -19,23 +27,7 @@
           "200": {
             "description": "OK",
             "content": {
-              "text/plain": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/WeatherForecast"
-                  }
-                }
-              },
               "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/WeatherForecast"
-                  }
-                }
-              },
-              "text/json": {
                 "schema": {
                   "type": "array",
                   "items": {
@@ -90,6 +82,9 @@
     }
   },
   "tags": [
+    {
+      "name": "VueApp1.Server"
+    },
     {
       "name": "WeatherForecast"
     }

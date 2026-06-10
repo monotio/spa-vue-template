@@ -26,6 +26,8 @@
     <!-- De facto standard security headers middleware; ASP.NET Core ships none. -->
     <PackageVersion Include="NetEscapades.AspNetCore.SecurityHeaders" Version="1.3.1" />
     <PackageVersion Include="Scalar.AspNetCore" Version="2.16.2" />
+    <!-- Scalar transformers for Microsoft.AspNetCore.OpenApi (AddScalarTransformers). -->
+    <PackageVersion Include="Scalar.AspNetCore.Microsoft" Version="2.16.2" />
   </ItemGroup>
 
   <ItemGroup Label="Test packages">

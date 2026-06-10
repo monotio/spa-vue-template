@@ -74,6 +74,16 @@
         "resolved": "2.16.2",
         "contentHash": "2dS8DRab00T4tyadGfiEw7Y3928mDGmk09yJSOqX7Jd69twU60n3jJPIIpAtA67UgngFL/UK0NxcSIoEQEd2AA=="
       },
+      "Scalar.AspNetCore.Microsoft": {
+        "type": "Direct",
+        "requested": "[2.16.2, )",
+        "resolved": "2.16.2",
+        "contentHash": "7VJJ/FQodb0W9QHuKBA2njsPcHtILHc5HP7unN0qsUr751A6IFlm0iw7aiwBqGRrH4J4fWKHa6FHvlTvw3mBXQ==",
+        "dependencies": {
+          "Microsoft.AspNetCore.OpenApi": "10.0.0",
+          "Scalar.AspNetCore": "2.16.2"
+        }
+      },
       "Microsoft.OpenApi": {
         "type": "Transitive",
         "resolved": "2.0.0",

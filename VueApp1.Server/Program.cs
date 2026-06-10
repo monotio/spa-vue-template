@@ -43,7 +43,20 @@ app.Run();
 static void SetupApi(WebApplicationBuilder builder)
 {
     builder.Services.AddControllers();
-    builder.Services.AddOpenApi();
+    // Generated URLs and the OpenAPI contract use lowercase paths
+    // (route matching is case-insensitive either way).
+    builder.Services.AddRouting(options => options.LowercaseUrls = true);
+    builder.Services.AddOpenApi(options =>
+    {
+        options.AddScalarTransformers();
+        options.AddDocumentTransformer((document, _, _) =>
+        {
+            document.Info.Title = "VueApp1 API";
+            document.Info.Description =
+                "RFC 9457 problem details on every error; see /scalar/v1 for interactive docs.";
+            return Task.CompletedTask;
+        });
+    });
     // The handler enriches unhandled exceptions with traceId (+ details in
     // Development) before AddProblemDetails' default machinery writes them.
     builder.Services.AddExceptionHandler<ApiProblemDetailsExceptionHandler>();
@@ -234,11 +247,36 @@ static void ConfigurePipeline(WebApplication app, PerformanceTuningOptions perfo
     if (exposeOpenApi)
     {
         app.MapOpenApi();
+
+        // RFC 9727 API catalog: machine-readable discovery of this host's API docs.
+        var apiCatalog = new Dictionary<string, object>
+        {
+            ["linkset"] = new[]
+            {
+                new Dictionary<string, object>
+                {
+                    ["anchor"] = "/api",
+                    ["service-desc"] = new[]
+                    {
+                        new Dictionary<string, string>
+                        {
+                            ["href"] = "/openapi/v1.json",
+                            ["type"] = "application/json",
+                        },
+                    },
+                },
+            },
+        };
+        app.MapGet(
+            "/.well-known/api-catalog",
+            () => Results.Json(apiCatalog, contentType: "application/linkset+json"));
     }
 
     if (app.Environment.IsDevelopment())
     {
-        app.MapScalarApiReference();
+        app.MapScalarApiReference(options => options
+            .WithTitle("VueApp1 API")
+            .WithDefaultHttpClient(ScalarTarget.CSharp, ScalarClient.HttpClient));
     }
 
     app.UseExceptionHandler();
