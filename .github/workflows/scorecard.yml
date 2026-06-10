@@ -10,6 +10,8 @@ on:
     branches: [master]
   schedule:
     - cron: '30 5 * * 1'
+  # Manual re-run for transient scorecard.dev publish failures.
+  workflow_dispatch:
 
 permissions: read-all
 
