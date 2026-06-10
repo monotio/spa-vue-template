@@ -1,0 +1,17 @@
+namespace VueApp1.Server;
+
+/// <summary>
+/// Stable URI identifiers for the <c>type</c> member of RFC 9457 problem
+/// responses. Clients branch on these instead of parsing human-readable
+/// detail strings (which can change or be localized). The URIs are
+/// identifiers, not links — they don't have to resolve, though pointing them
+/// at real help pages is a nice upgrade later.
+/// </summary>
+public static class ProblemDetailTypes
+{
+    /// <summary>The request was well-formed but failed a domain rule.</summary>
+    public const string ValidationFailed = "/problems/validation-failed";
+
+    /// <summary>The resource exists but the operation conflicts with its current state.</summary>
+    public const string ConflictingState = "/problems/conflicting-state";
+}

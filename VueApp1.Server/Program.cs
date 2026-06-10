@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using VueApp1.Server.ExceptionHandlers;
 using VueApp1.Server.Middleware;
 using VueApp1.Server.Services;
 
@@ -42,6 +43,9 @@ static void SetupApi(WebApplicationBuilder builder)
 {
     builder.Services.AddControllers();
     builder.Services.AddOpenApi();
+    // The handler enriches unhandled exceptions with traceId (+ details in
+    // Development) before AddProblemDetails' default machinery writes them.
+    builder.Services.AddExceptionHandler<ApiProblemDetailsExceptionHandler>();
     builder.Services.AddProblemDetails();
     builder.Services.AddSingleton(TimeProvider.System);
     builder.Services.AddScoped<IWeatherForecastService, WeatherForecastService>();

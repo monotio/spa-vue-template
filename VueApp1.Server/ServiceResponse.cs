@@ -12,6 +12,9 @@ public enum ServiceResult
 
 /// <summary>
 /// Wraps the result of a service operation for consistent controller handling.
+/// Error helpers can carry RFC 9457 fields; give recurring, client-actionable
+/// errors a stable <see cref="ProblemDetailTypes"/> identifier so frontends
+/// branch on <c>type</c> rather than parsing detail strings.
 /// </summary>
 public class ServiceResponse
 {
@@ -29,6 +32,18 @@ public class ServiceResponse
             : null,
     };
 
+    public static ServiceResponse BadRequest(string type, string title, string? detail = null) => new()
+    {
+        Result = ServiceResult.BadRequest,
+        Details = new()
+        {
+            Status = StatusCodes.Status400BadRequest,
+            Type = type,
+            Title = title,
+            Detail = detail,
+        },
+    };
+
     public static ServiceResponse NotFound() => new() { Result = ServiceResult.NotFound };
 
     public static ServiceResponse Conflict(string? detail = null) => new()
@@ -37,6 +52,48 @@ public class ServiceResponse
         Details = detail is not null
             ? new() { Status = StatusCodes.Status409Conflict, Detail = detail }
             : null,
+    };
+
+    public static ServiceResponse Conflict(string type, string title, string? detail = null) => new()
+    {
+        Result = ServiceResult.Conflict,
+        Details = new()
+        {
+            Status = StatusCodes.Status409Conflict,
+            Type = type,
+            Title = title,
+            Detail = detail,
+        },
+    };
+
+    /// <summary>
+    /// 412: a precondition (If-Match, expected state/version) was not met.
+    /// Reuses the BadRequest result; the status on Details drives the HTTP code.
+    /// </summary>
+    public static ServiceResponse PreconditionFailed(string? detail = null, string? type = null) => new()
+    {
+        Result = ServiceResult.BadRequest,
+        Details = new()
+        {
+            Status = StatusCodes.Status412PreconditionFailed,
+            Type = type,
+            Detail = detail,
+        },
+    };
+
+    /// <summary>
+    /// 422: the request was well-formed but semantically invalid.
+    /// Reuses the BadRequest result; the status on Details drives the HTTP code.
+    /// </summary>
+    public static ServiceResponse UnprocessableEntity(string? detail = null, string? type = null) => new()
+    {
+        Result = ServiceResult.BadRequest,
+        Details = new()
+        {
+            Status = StatusCodes.Status422UnprocessableEntity,
+            Type = type ?? ProblemDetailTypes.ValidationFailed,
+            Detail = detail,
+        },
     };
 }
 
@@ -58,6 +115,42 @@ public class ServiceResponse<T> : ServiceResponse
             : null,
     };
 
+    public static new ServiceResponse<T> BadRequest(string type, string title, string? detail = null) => new()
+    {
+        Result = ServiceResult.BadRequest,
+        Details = new()
+        {
+            Status = StatusCodes.Status400BadRequest,
+            Type = type,
+            Title = title,
+            Detail = detail,
+        },
+    };
+
     public static new ServiceResponse<T> NotFound() => new() { Result = ServiceResult.NotFound };
+
+    /// <inheritdoc cref="ServiceResponse.PreconditionFailed" />
+    public static new ServiceResponse<T> PreconditionFailed(string? detail = null, string? type = null) => new()
+    {
+        Result = ServiceResult.BadRequest,
+        Details = new()
+        {
+            Status = StatusCodes.Status412PreconditionFailed,
+            Type = type,
+            Detail = detail,
+        },
+    };
+
+    /// <inheritdoc cref="ServiceResponse.UnprocessableEntity" />
+    public static new ServiceResponse<T> UnprocessableEntity(string? detail = null, string? type = null) => new()
+    {
+        Result = ServiceResult.BadRequest,
+        Details = new()
+        {
+            Status = StatusCodes.Status422UnprocessableEntity,
+            Type = type ?? ProblemDetailTypes.ValidationFailed,
+            Detail = detail,
+        },
+    };
 }
 #pragma warning restore CA1000
