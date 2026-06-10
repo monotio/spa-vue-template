@@ -84,7 +84,7 @@ In production, the backend serves the built frontend static files with a fallbac
 ### Code Style
 
 - **Frontend**: ESLint 9 flat config with type-checked rules + Prettier (semicolons, single quotes, trailing commas, 100 char width, 2-space indent, LF line endings)
-- **Frontend TypeScript**: `strict` + `noUncheckedIndexedAccess` + `noPropertyAccessFromIndexSignature` + `verbatimModuleSyntax` + `erasableSyntaxOnly` via `@vue/tsconfig` 0.8 base. `strictImportMetaEnv` enforced in `env.d.ts`
+- **Frontend TypeScript**: `strict` + `noUncheckedIndexedAccess` + `noPropertyAccessFromIndexSignature` + `verbatimModuleSyntax` + `erasableSyntaxOnly` via `@vue/tsconfig` 0.9 base. `strictImportMetaEnv` enforced in `env.d.ts`
 - **Frontend ESLint enforces**: `<script setup lang="ts">` only, type-based `defineProps`/`defineEmits`, `<style scoped>` required, no undefined components, `require-typed-ref`, `no-ref-object-reactivity-loss`, `prefer-use-template-ref`
 - **Backend**: `Directory.Build.props` centralizes `TreatWarningsAsErrors`, `EnforceCodeStyleInBuild`, and `AnalysisLevel: latest-recommended` across all projects
 - **Backend**: `.editorconfig` enforces C# naming conventions (`_camelCase` private fields, `PascalCase` types, `I`-prefixed interfaces) and code style preferences
