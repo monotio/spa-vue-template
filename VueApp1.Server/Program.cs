@@ -16,6 +16,7 @@ var performance = builder.Configuration.GetSection(PerformanceTuningOptions.Sect
 
 // -- Services --
 SetupApi(builder);
+SetupKestrelLimits(builder, performance);
 SetupCors(builder);
 SetupHealthChecks(builder);
 SetupCompression(builder);
@@ -49,6 +50,19 @@ static void SetupApi(WebApplicationBuilder builder)
     builder.Services.AddProblemDetails();
     builder.Services.AddSingleton(TimeProvider.System);
     builder.Services.AddScoped<IWeatherForecastService, WeatherForecastService>();
+}
+
+static void SetupKestrelLimits(WebApplicationBuilder builder, PerformanceTuningOptions performance)
+{
+    builder.WebHost.ConfigureKestrel(kestrel =>
+    {
+        // Generous defaults, config-driven via the Performance section:
+        // a body-size cap plus a minimum upload rate (slow-loris guard).
+        kestrel.Limits.MaxRequestBodySize = performance.RequestLimits.MaxRequestBodySizeBytes;
+        kestrel.Limits.MinRequestBodyDataRate = new Microsoft.AspNetCore.Server.Kestrel.Core.MinDataRate(
+            bytesPerSecond: performance.RequestLimits.MinBodyDataRateBytesPerSecond,
+            gracePeriod: TimeSpan.FromSeconds(performance.RequestLimits.MinBodyDataRateGraceSeconds));
+    });
 }
 
 static void SetupCors(WebApplicationBuilder builder)
@@ -170,8 +184,52 @@ static void SetupTelemetry(WebApplicationBuilder builder)
         });
 }
 
+static void ConfigureSecurityHeaders(WebApplication app)
+{
+    var isDevelopment = app.Environment.IsDevelopment();
+
+    app.UseSecurityHeaders(policies =>
+    {
+        // nosniff, frame deny, referrer policy, HSTS (HTTPS, non-localhost),
+        // and Server-header removal. HSTS here replaces a separate UseHsts().
+        policies.AddDefaultSecurityHeaders();
+        policies.AddCrossOriginOpenerPolicy(b => b.SameOrigin());
+        policies.AddPermissionsPolicy(b =>
+        {
+            b.AddCamera().None();
+            b.AddMicrophone().None();
+            b.AddGeolocation().None();
+        });
+        policies.AddContentSecurityPolicy(csp =>
+        {
+            csp.AddDefaultSrc().Self();
+            csp.AddBaseUri().Self();
+            csp.AddFormAction().Self();
+            csp.AddFrameAncestors().None();
+            csp.AddObjectSrc().None();
+            csp.AddImgSrc().Self().Data();
+            csp.AddManifestSrc().Self();
+            csp.AddWorkerSrc().Self();
+            csp.AddScriptSrc().Self();
+            var style = csp.AddStyleSrc().Self();
+            var connect = csp.AddConnectSrc().Self();
+            if (isDevelopment)
+            {
+                // Vite dev server/HMR injects inline styles and uses websockets.
+                style.UnsafeInline();
+                connect.From("ws:").From("wss:");
+            }
+        });
+    });
+}
+
 static void ConfigurePipeline(WebApplication app, PerformanceTuningOptions performance)
 {
+    // Order matters: headers apply to every response (including errors),
+    // and scanner probes die before touching routing or telemetry.
+    ConfigureSecurityHeaders(app);
+    app.UseExploitProbeDenyList();
+
     var exposeOpenApi = app.Environment.IsDevelopment() || app.Configuration.GetValue<bool>("OpenApi:Enabled");
     if (exposeOpenApi)
     {
@@ -186,11 +244,7 @@ static void ConfigurePipeline(WebApplication app, PerformanceTuningOptions perfo
     app.UseExceptionHandler();
     app.UseStatusCodePages();
 
-    if (!app.Environment.IsDevelopment())
-    {
-        app.UseHsts();
-    }
-
+    // HSTS is emitted by the security headers policy above.
     app.UseHttpsRedirection();
     app.UseResponseCompression();
     app.UseRouting();
@@ -243,6 +297,14 @@ internal sealed class PerformanceTuningOptions
     public OutputCachingSettings OutputCache { get; init; } = new();
     public RateLimitingSettings RateLimiting { get; init; } = new();
     public RequestTimeoutSettings RequestTimeout { get; init; } = new();
+    public RequestLimitSettings RequestLimits { get; init; } = new();
+}
+
+internal sealed class RequestLimitSettings
+{
+    public long MaxRequestBodySizeBytes { get; init; } = 10 * 1024 * 1024;
+    public double MinBodyDataRateBytesPerSecond { get; init; } = 100;
+    public int MinBodyDataRateGraceSeconds { get; init; } = 10;
 }
 
 internal sealed class OutputCachingSettings
