@@ -63,6 +63,11 @@ static void SetupApi(WebApplicationBuilder builder)
     builder.Services.AddProblemDetails();
     builder.Services.AddSingleton(TimeProvider.System);
     builder.Services.AddScoped<IWeatherForecastService, WeatherForecastService>();
+    // Host-header-injection-safe absolute links (emails, notifications):
+    // generated from the configured PublicUri, never from request headers.
+    builder.Services.Configure<PublicUriOptions>(
+        builder.Configuration.GetSection(PublicUriOptions.SectionName));
+    builder.Services.AddSingleton<IUriLinkGenerator, UriLinkGenerator>();
 }
 
 static void SetupKestrelLimits(WebApplicationBuilder builder, PerformanceTuningOptions performance)
@@ -167,8 +172,11 @@ static void SetupRequestTimeouts(WebApplicationBuilder builder, PerformanceTunin
 static void SetupTelemetry(WebApplicationBuilder builder)
 {
     var serviceName = builder.Environment.ApplicationName;
+    // Config key wins; the standard OTEL_EXPORTER_OTLP_ENDPOINT env var is
+    // honored natively by AddOtlpExporter when no explicit endpoint is set.
     var endpoint = builder.Configuration["OpenTelemetry:Otlp:Endpoint"];
-    var hasOtlpEndpoint = !string.IsNullOrWhiteSpace(endpoint);
+    var hasOtlpEndpoint = !string.IsNullOrWhiteSpace(endpoint)
+        || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT"));
 
     builder.Services.AddOpenTelemetry()
         .ConfigureResource(resource => resource.AddService(serviceName))
@@ -176,11 +184,20 @@ static void SetupTelemetry(WebApplicationBuilder builder)
         {
             tracing
                 .AddAspNetCoreInstrumentation()
-                .AddHttpClientInstrumentation();
+                .AddHttpClientInstrumentation()
+                // Wildcard: every ActivitySource under the app namespace is
+                // collected without touching this setup again.
+                .AddSource("VueApp1.*");
 
             if (hasOtlpEndpoint)
             {
-                tracing.AddOtlpExporter(options => options.Endpoint = new Uri(endpoint!));
+                tracing.AddOtlpExporter(options =>
+                {
+                    if (!string.IsNullOrWhiteSpace(endpoint))
+                    {
+                        options.Endpoint = new Uri(endpoint);
+                    }
+                });
             }
         })
         .WithMetrics(metrics =>
@@ -188,11 +205,18 @@ static void SetupTelemetry(WebApplicationBuilder builder)
             metrics
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation()
-                .AddRuntimeInstrumentation();
+                .AddRuntimeInstrumentation()
+                .AddMeter("VueApp1.*");
 
             if (hasOtlpEndpoint)
             {
-                metrics.AddOtlpExporter(options => options.Endpoint = new Uri(endpoint!));
+                metrics.AddOtlpExporter(options =>
+                {
+                    if (!string.IsNullOrWhiteSpace(endpoint))
+                    {
+                        options.Endpoint = new Uri(endpoint);
+                    }
+                });
             }
         });
 }
