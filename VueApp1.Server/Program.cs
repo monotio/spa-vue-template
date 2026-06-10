@@ -224,6 +224,10 @@ static void ConfigurePipeline(WebApplication app, PerformanceTuningOptions perfo
             return;
         }
 
+        // no-cache (revalidate, not "never cache") so deployments and service-worker
+        // updates propagate promptly; fingerprinted assets served by MapStaticAssets
+        // remain immutable-cached.
+        context.Response.Headers.CacheControl = "no-cache";
         var indexPath = Path.Combine(app.Environment.WebRootPath, "index.html");
         await context.Response.SendFileAsync(indexPath);
     });

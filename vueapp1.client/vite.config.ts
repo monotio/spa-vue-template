@@ -4,6 +4,7 @@ import { fileURLToPath, URL } from 'node:url';
 
 import { defineConfig } from 'vite';
 import plugin from '@vitejs/plugin-vue';
+import { VitePWA } from 'vite-plugin-pwa';
 import fs from 'fs';
 import path from 'path';
 import child_process from 'child_process';
@@ -43,7 +44,42 @@ const target = env['ASPNETCORE_HTTPS_PORT']
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [plugin()],
+  plugins: [
+    plugin(),
+    VitePWA({
+      // 'prompt' + ReloadPrompt.vue gives users an explicit "reload to update"
+      // affordance; switch to 'autoUpdate' for silent updates.
+      registerType: 'prompt',
+      devOptions: { enabled: true },
+      includeAssets: ['favicon.ico', 'logo.svg', 'apple-touch-icon-180x180.png'],
+      manifest: {
+        name: 'VueApp1',
+        short_name: 'VueApp1',
+        description: 'Vue 3 + ASP.NET Core SPA',
+        theme_color: '#35495e',
+        background_color: '#ffffff',
+        display: 'standalone',
+        icons: [
+          { src: 'pwa-64x64.png', sizes: '64x64', type: 'image/png' },
+          { src: 'pwa-192x192.png', sizes: '192x192', type: 'image/png' },
+          { src: 'pwa-512x512.png', sizes: '512x512', type: 'image/png' },
+          {
+            src: 'maskable-icon-512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable',
+          },
+        ],
+      },
+      workbox: {
+        navigateFallback: 'index.html',
+        // The crux of hosting a PWA on a .NET backend: the service worker must
+        // never answer navigations to backend routes with the SPA shell.
+        // Mirrors the server-side MapFallback exclusion for /api.
+        navigateFallbackDenylist: [/^\/api/, /^\/health/, /^\/scalar/, /^\/openapi/],
+      },
+    }),
+  ],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
