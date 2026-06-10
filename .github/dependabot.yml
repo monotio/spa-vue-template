@@ -37,6 +37,15 @@ updates:
       default-days: 5
       semver-major-days: 14
     labels: ["dependencies"]
+    ignore:
+      # Types track the target Node LTS (24, per .nvmrc/engines), never
+      # registry-latest — odd-numbered Node majors don't get LTS.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # 9.x demands engines ^22.22.2 || ^24.15 || >=26 — stricter than this
+      # repo's floor; one utility must not dictate engines (README watch list).
+      - dependency-name: "npm-run-all2"
+        update-types: ["version-update:semver-major"]
     groups:
       frontend:
         patterns: ["*"]
