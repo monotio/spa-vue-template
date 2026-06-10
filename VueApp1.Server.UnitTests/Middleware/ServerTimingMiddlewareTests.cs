@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.DependencyInjection;
@@ -77,6 +78,28 @@ public class ServerTimingMiddlewareTests
         await RunPipelineAsync(context, response);
 
         Assert.False(context.Response.Headers.ContainsKey("Server-Timing"));
+    }
+
+    [Fact]
+    public async Task Duration_UsesInvariantDecimalPoint_OnCommaDecimalLocales()
+    {
+        // Server-Timing requires a decimal point; sv-SE formats 0.9 as "0,9".
+        var original = CultureInfo.CurrentCulture;
+        CultureInfo.CurrentCulture = new CultureInfo("sv-SE");
+        try
+        {
+            var (context, response) = CreateContext("/api/weatherforecast");
+
+            await RunPipelineAsync(context, response);
+
+            var header = context.Response.Headers["Server-Timing"].ToString();
+            Assert.DoesNotContain(",", header.Split(';')[1], StringComparison.Ordinal);
+            Assert.Matches(@"total;dur=\d+\.\d", header);
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = original;
+        }
     }
 
     [Fact]

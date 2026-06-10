@@ -9,7 +9,8 @@ export default defineConfigWithVueTs(
     files: ['**/*.{ts,mts,tsx,vue}'],
   },
 
-  globalIgnores(['**/dist/**', '**/dist-ssr/**', '**/coverage/**']),
+  // dev-dist is the service worker vite-plugin-pwa generates in dev mode.
+  globalIgnores(['**/dist/**', '**/dist-ssr/**', '**/dev-dist/**', '**/coverage/**']),
 
   pluginVue.configs['flat/recommended'],
   vueTsConfigs.recommendedTypeChecked,
