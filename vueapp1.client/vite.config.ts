@@ -56,7 +56,9 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'lcov'],
+      // json-summary feeds badges/size-delta tooling; cobertura merges with the
+      // .NET side via reportgenerator (see .config/dotnet-tools.json).
+      reporter: ['text', 'lcov', 'json-summary', 'cobertura'],
       include: [
         'src/composables/**/*.ts',
         'src/contracts/**/*.ts',

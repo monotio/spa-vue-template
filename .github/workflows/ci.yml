@@ -5,7 +5,9 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  workflow_dispatch:
 
+# Principle of least privilege: this workflow only reads the repo.
 permissions:
   contents: read
 
@@ -15,20 +17,32 @@ concurrency:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # PRs run on ubuntu only for fast feedback; pushes to master (and manual
+        # dispatches) also run the Windows leg to catch path-separator,
+        # line-ending, and dev-cert issues that bite Windows users.
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v6
+      # All actions are pinned to full commit SHAs with the version in a trailing
+      # comment: tags are mutable and have been retargeted in real supply-chain
+      # attacks (tj-actions/changed-files, March 2025). Dependabot understands
+      # this format and keeps the SHAs fresh.
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@9a946fdbd5fb07b82b2f5a4466058b876ab72bb2 # v5.3.0
         with:
           global-json-file: global.json
           cache: true
           cache-dependency-path: '**/packages.lock.json'
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           # .nvmrc is the single source of truth for the CI Node version.
           node-version-file: .nvmrc
@@ -37,6 +51,14 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci --prefix vueapp1.client
+
+      - name: Rebuild trusted native packages
+        # .npmrc sets ignore-scripts=true (install scripts are the dominant npm
+        # supply-chain attack vector — e.g. the Shai-Hulud worm, Sep 2025, with
+        # 1700+ compromised package versions). Packages that legitimately need
+        # their install scripts are rebuilt explicitly by this allow-list script;
+        # see "rebuild-trusted" in vueapp1.client/package.json.
+        run: npm --prefix vueapp1.client run rebuild-trusted
 
       - name: Restore .NET packages
         # --locked-mode fails the build if packages.lock.json is out of sync with the
@@ -53,7 +75,7 @@ jobs:
         run: npm run type-check
 
       - name: Frontend tests
-        run: npm --prefix vueapp1.client run test:coverage
+        run: npm --prefix vueapp1.client run test:ci
 
       - name: Build
         run: npm run build
@@ -73,3 +95,14 @@ jobs:
           /p:Threshold=20
           /p:ThresholdType=line
           /p:ThresholdStat=total
+
+      - name: Upload test results
+        # always(): failed runs are exactly the ones whose results you need.
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-results-${{ matrix.os }}
+          path: vueapp1.client/test-results/
+          # Loudly catch mis-wired output paths instead of silently uploading nothing.
+          if-no-files-found: error
+          retention-days: 7
