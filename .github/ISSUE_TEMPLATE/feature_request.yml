@@ -1,0 +1,24 @@
+name: Feature request
+description: Propose an improvement to the template
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the gap from the perspective of someone starting a new project from this template.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: |
+        Note: this template prefers documented patterns over shipped abstractions —
+        would a docs page cover this instead of code?

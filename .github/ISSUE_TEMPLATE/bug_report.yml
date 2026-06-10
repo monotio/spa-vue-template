@@ -1,0 +1,37 @@
+name: Bug report
+description: Something in the template is broken or behaves unexpectedly
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Clone the template / use "Use this template"
+        2. Run `npm run check`
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, .NET SDK version (`dotnet --version`), Node version (`node --version`)
+      placeholder: |
+        macOS 15 / Windows 11 / Ubuntu 24.04
+        dotnet 10.0.300
+        node v24.x
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      render: shell
