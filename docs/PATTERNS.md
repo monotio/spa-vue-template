@@ -1,0 +1,112 @@
+# Documented patterns
+
+Patterns this template deliberately ships as documentation instead of code.
+A starter template earns its keep by staying lean: these become relevant when
+your app grows a particular feature, and pasting a documented pattern beats
+deleting shipped abstractions you never needed.
+
+## Minimal-API variant of the controller pattern
+
+The template uses controllers (`ApiControllerBase` + `HandleServiceResponse` +
+`ServiceResponse<T>`) because that pipeline is its teaching core. Microsoft
+recommends minimal APIs for new projects; if you prefer them, the same
+service layer plugs in with a small adapter:
+
+```csharp
+public static class ServiceResponseExtensions
+{
+    public static IResult ToTypedResult<T>(this ServiceResponse<T> response) =>
+        response.Result switch
+        {
+            ServiceResult.Success => TypedResults.Ok(response.Value),
+            ServiceResult.NotFound => TypedResults.NotFound(),
+            ServiceResult.NotAuthorized => TypedResults.Forbid(),
+            _ => TypedResults.Problem(
+                detail: response.Details?.Detail,
+                statusCode: response.Details?.Status ?? StatusCodes.Status400BadRequest,
+                type: response.Details?.Type),
+        };
+}
+
+var api = app.MapGroup("/api/weatherforecast");
+api.MapGet("/", async (IWeatherForecastService service, CancellationToken ct) =>
+    (await service.GetForecastsAsync(ct)).ToTypedResult());
+```
+
+Note: `builder.Services.AddValidation()` (Microsoft.Extensions.Validation)
+applies **only to minimal API endpoints** — add it if you adopt this variant.
+Controllers already get DataAnnotations validation through MVC; with zero
+minimal endpoints it is dead code, which is why the template doesn't call it.
+
+## Origin-header validation (DNS-rebinding / CSRF defense-in-depth)
+
+Relevant the moment you add token-authenticated POST endpoints or an MCP
+surface. Browsers always send `Origin` on cross-origin requests; DNS-rebinding
+attacks reach `localhost`-bound services with an attacker-controlled Origin.
+Pattern: an endpoint filter that
+
+1. derives its allowlist from the existing `AllowedHosts` configuration
+   (zero per-environment upkeep; `*` disables the check),
+2. allows requests **without** an Origin header (non-browser clients),
+3. rejects requests whose Origin is present but not allowlisted (403 with a
+   ProblemDetails body),
+4. honors subdomain wildcards with the same semantics as host filtering.
+
+```csharp
+public sealed class ValidateOriginFilter(IConfiguration config) : IEndpointFilter
+{
+    public async ValueTask<object?> InvokeAsync(
+        EndpointFilterInvocationContext context, EndpointFilterDelegate next)
+    {
+        var origin = context.HttpContext.Request.Headers.Origin;
+        if (StringValues.IsNullOrEmpty(origin) || IsAllowed(origin!, config["AllowedHosts"]))
+        {
+            return await next(context);
+        }
+        return TypedResults.Problem(statusCode: StatusCodes.Status403Forbidden,
+            title: "Origin not allowed.");
+    }
+    // IsAllowed: '*' => true; otherwise compare origin host against the
+    // semicolon-separated AllowedHosts list, honoring leading-dot wildcards.
+}
+```
+
+## Idempotency-Key convention
+
+For unsafe endpoints that clients may retry (mobile networks, agent tools):
+accept an `Idempotency-Key` header, store `(key, response)` for a TTL window
+(HybridCache fits), and replay the stored response on key reuse. Combine with
+an `AsyncLocal`-backed request-context accessor when services deep in the
+stack need the key without parameter-threading.
+
+## Scoped DI factory: HTTP vs background context
+
+When a dependency needs different implementations inside and outside a
+request (e.g. current-user accessor), register a factory that switches on
+`IHttpContextAccessor.HttpContext`:
+
+```csharp
+builder.Services.AddScoped<ICurrentUser>(sp =>
+    sp.GetRequiredService<IHttpContextAccessor>().HttpContext is { } http
+        ? new HttpCurrentUser(http)
+        : new SystemCurrentUser());
+```
+
+## Server-Timing entries from EF Core
+
+`ServerTimingMiddleware` exposes `IServerTimingMetrics` (see the middleware's
+comments). Wire a `DbCommandInterceptor` that accumulates command duration and
+count into an `AsyncLocal` holder, and a scoped `IServerTimingMetrics` that
+reads it: the browser DevTools network panel then shows
+`db;dur=12.3;desc="4 queries"` per API call. The middleware snapshots inside
+`Response.OnStarting`, which preserves the request's `ExecutionContext` —
+required for `AsyncLocal` to resolve.
+
+## Optimistic UI list updates
+
+Shape that composes with `useAbortableRequest`: seed the list with an
+optimistic item (client-generated id + timestamp injected as options for
+testability), reconcile by identity when the server responds (replace the
+optimistic item with the real one), and defensively clear/rollback on error.
+Keep `generateId` and `now` injectable — the composable becomes trivially
+unit-testable without fake timers.

@@ -1,0 +1,11 @@
+id: vue-ref-null-redundant
+language: ts
+severity: error
+message: Prefer ref<T>() over ref<T | null>(null)
+note: |
+  ref<T>() types .value as T | undefined without widening the generic.
+  BAD:  const el = ref<HTMLElement | null>(null);
+  GOOD: const el = ref<HTMLElement>();
+fix: ref<$T>()
+rule:
+  pattern: ref<$T | null>(null)

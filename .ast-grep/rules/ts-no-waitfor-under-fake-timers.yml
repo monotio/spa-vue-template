@@ -1,0 +1,13 @@
+id: ts-no-waitfor-under-fake-timers
+language: ts
+severity: warning
+message: vi.waitFor polls ~40x and re-runs timer cascades — use deterministic settles under fake timers
+note: |
+  Under vi.useFakeTimers, replace polling with:
+    await vi.advanceTimersByTimeAsync(ms);
+    await nextTick();
+  (With real timers vi.waitFor is acceptable; this rule is a review prompt.)
+files:
+  - vueapp1.client/src/**/__tests__/**
+rule:
+  pattern: vi.waitFor($$$ARGS)

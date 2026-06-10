@@ -1,5 +1,11 @@
 name: Build Provenance
 
+# Attests that the published artifacts were built from this repo by this
+# workflow (SLSA build provenance). Downstream verification:
+#   gh attestation verify <artifact> --repo <owner>/<repo>
+# Provenance without documented verification is theater — keep that command in
+# the README. Upgrade path to SLSA L3 is reusable-workflow isolation.
+
 on:
   push:
     branches: [master]
@@ -9,27 +15,41 @@ permissions:
   attestations: write
   contents: read
 
+concurrency:
+  group: provenance-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   attest-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
+      # Actions pinned to full commit SHAs — see ci.yml for the rationale.
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@9a946fdbd5fb07b82b2f5a4466058b876ab72bb2 # v5.3.0
         with:
           global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version-file: vueapp1.client/package.json
+          # .nvmrc is the single source of truth for the CI Node version
+          # (reading engines from package.json resolves differently than ci.yml did — drift bug).
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: vueapp1.client/package-lock.json
 
       - name: Install frontend dependencies
         run: npm ci --prefix vueapp1.client
+
+      - name: Rebuild trusted native packages
+        # See ci.yml — counterpart to ignore-scripts=true in .npmrc.
+        run: npm --prefix vueapp1.client run rebuild-trusted
 
       - name: Build frontend
         run: npm --prefix vueapp1.client run build
@@ -38,7 +58,7 @@ jobs:
         run: dotnet publish VueApp1.Server -c Release -o out/server
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-path: |
             out/server/**

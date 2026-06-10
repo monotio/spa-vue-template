@@ -1,0 +1,20 @@
+id: ts-no-console-log
+language: ts
+severity: error
+message: Route logging through src/utils/logger.ts, not console.*
+note: |
+  logger.ts is the single seam for wiring an error tracker / OTLP browser
+  exporter later (docs/CONFIG.md, §frontend error handling).
+  BAD:  console.log('loaded', data);
+  GOOD: logDebug('loaded', data);
+files:
+  - vueapp1.client/src/**
+ignores:
+  - vueapp1.client/src/utils/logger.ts
+  - vueapp1.client/src/**/__tests__/**
+  - vueapp1.client/src/test/**
+rule:
+  any:
+    - pattern: console.log($$$ARGS)
+    - pattern: console.warn($$$ARGS)
+    - pattern: console.error($$$ARGS)

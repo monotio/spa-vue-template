@@ -29,7 +29,7 @@ describe('weather store', () => {
     const store = useWeatherStore();
     await store.load();
 
-    expect(store.error).toBeNull();
+    expect(store.error).toBeUndefined();
     expect(store.forecasts).toHaveLength(1);
     expect(store.forecasts[0]?.summary).toBe('Warm');
   });
@@ -57,6 +57,6 @@ describe('weather store', () => {
 
     store.clear();
     expect(store.forecasts).toHaveLength(0);
-    expect(store.error).toBeNull();
+    expect(store.error).toBeUndefined();
   });
 });

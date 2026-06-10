@@ -1,0 +1,14 @@
+**/node_modules
+**/bin
+**/obj
+**/dist
+**/coverage
+**/test-results
+**/TestResults
+.git
+.github
+.vscode
+.idea
+.DS_Store
+*.md
+!README.md

@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using VueApp1.Server.ExceptionHandlers;
 using VueApp1.Server.Middleware;
 using VueApp1.Server.Services;
 
@@ -15,6 +16,7 @@ var performance = builder.Configuration.GetSection(PerformanceTuningOptions.Sect
 
 // -- Services --
 SetupApi(builder);
+SetupKestrelLimits(builder, performance);
 SetupCors(builder);
 SetupHealthChecks(builder);
 SetupCompression(builder);
@@ -41,10 +43,50 @@ app.Run();
 static void SetupApi(WebApplicationBuilder builder)
 {
     builder.Services.AddControllers();
-    builder.Services.AddOpenApi();
+    // Generated URLs and the OpenAPI contract use lowercase paths
+    // (route matching is case-insensitive either way).
+    builder.Services.AddRouting(options => options.LowercaseUrls = true);
+    builder.Services.AddOpenApi(options =>
+    {
+        options.AddScalarTransformers();
+        options.AddDocumentTransformer((document, _, _) =>
+        {
+            document.Info.Title = "VueApp1 API";
+            document.Info.Description =
+                "RFC 9457 problem details on every error; see /scalar/v1 for interactive docs.";
+            return Task.CompletedTask;
+        });
+    });
+    // The handler enriches unhandled exceptions with traceId (+ details in
+    // Development) before AddProblemDetails' default machinery writes them.
+    builder.Services.AddExceptionHandler<ApiProblemDetailsExceptionHandler>();
     builder.Services.AddProblemDetails();
     builder.Services.AddSingleton(TimeProvider.System);
+    // HybridCache: in-process L1 with stampede protection; add a distributed
+    // L2 by registering IDistributedCache (e.g. AddStackExchangeRedisCache) —
+    // HybridCache picks it up automatically. Rule of thumb: L1 expiry ~1/6 of L2.
+    builder.Services.AddHybridCache();
+    // Outbound HTTP with retries/timeouts/circuit-breaker when you add a client:
+    // builder.Services.AddHttpClient("backend").AddStandardResilienceHandler();
     builder.Services.AddScoped<IWeatherForecastService, WeatherForecastService>();
+    // Host-header-injection-safe absolute links (emails, notifications):
+    // generated from the configured PublicUri, never from request headers.
+    builder.Services.Configure<PublicUriOptions>(
+        builder.Configuration.GetSection(PublicUriOptions.SectionName));
+    builder.Services.AddSingleton<IUriLinkGenerator, UriLinkGenerator>();
+}
+
+static void SetupKestrelLimits(WebApplicationBuilder builder, PerformanceTuningOptions performance)
+{
+    builder.WebHost.ConfigureKestrel(kestrel =>
+    {
+        // Generous defaults, config-driven via the Performance section:
+        // a body-size cap plus a minimum upload rate (slow-loris guard).
+        kestrel.Limits.MaxRequestBodySize = performance.RequestLimits.MaxRequestBodySizeBytes;
+        kestrel.Limits.MinRequestBodyDataRate = new Microsoft.AspNetCore.Server.Kestrel.Core.MinDataRate(
+            bytesPerSecond: performance.RequestLimits.MinBodyDataRateBytesPerSecond,
+            gracePeriod: TimeSpan.FromSeconds(performance.RequestLimits.MinBodyDataRateGraceSeconds));
+    });
 }
 
 static void SetupCors(WebApplicationBuilder builder)
@@ -136,8 +178,11 @@ static void SetupRequestTimeouts(WebApplicationBuilder builder, PerformanceTunin
 static void SetupTelemetry(WebApplicationBuilder builder)
 {
     var serviceName = builder.Environment.ApplicationName;
+    // Config key wins; the standard OTEL_EXPORTER_OTLP_ENDPOINT env var is
+    // honored natively by AddOtlpExporter when no explicit endpoint is set.
     var endpoint = builder.Configuration["OpenTelemetry:Otlp:Endpoint"];
-    var hasOtlpEndpoint = !string.IsNullOrWhiteSpace(endpoint);
+    var hasOtlpEndpoint = !string.IsNullOrWhiteSpace(endpoint)
+        || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT"));
 
     builder.Services.AddOpenTelemetry()
         .ConfigureResource(resource => resource.AddService(serviceName))
@@ -145,11 +190,20 @@ static void SetupTelemetry(WebApplicationBuilder builder)
         {
             tracing
                 .AddAspNetCoreInstrumentation()
-                .AddHttpClientInstrumentation();
+                .AddHttpClientInstrumentation()
+                // Wildcard: every ActivitySource under the app namespace is
+                // collected without touching this setup again.
+                .AddSource("VueApp1.*");
 
             if (hasOtlpEndpoint)
             {
-                tracing.AddOtlpExporter(options => options.Endpoint = new Uri(endpoint!));
+                tracing.AddOtlpExporter(options =>
+                {
+                    if (!string.IsNullOrWhiteSpace(endpoint))
+                    {
+                        options.Endpoint = new Uri(endpoint);
+                    }
+                });
             }
         })
         .WithMetrics(metrics =>
@@ -157,36 +211,108 @@ static void SetupTelemetry(WebApplicationBuilder builder)
             metrics
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation()
-                .AddRuntimeInstrumentation();
+                .AddRuntimeInstrumentation()
+                .AddMeter("VueApp1.*");
 
             if (hasOtlpEndpoint)
             {
-                metrics.AddOtlpExporter(options => options.Endpoint = new Uri(endpoint!));
+                metrics.AddOtlpExporter(options =>
+                {
+                    if (!string.IsNullOrWhiteSpace(endpoint))
+                    {
+                        options.Endpoint = new Uri(endpoint);
+                    }
+                });
             }
         });
 }
 
+static void ConfigureSecurityHeaders(WebApplication app)
+{
+    var isDevelopment = app.Environment.IsDevelopment();
+
+    app.UseSecurityHeaders(policies =>
+    {
+        // nosniff, frame deny, referrer policy, HSTS (HTTPS, non-localhost),
+        // and Server-header removal. HSTS here replaces a separate UseHsts().
+        policies.AddDefaultSecurityHeaders();
+        policies.AddCrossOriginOpenerPolicy(b => b.SameOrigin());
+        policies.AddPermissionsPolicy(b =>
+        {
+            b.AddCamera().None();
+            b.AddMicrophone().None();
+            b.AddGeolocation().None();
+        });
+        policies.AddContentSecurityPolicy(csp =>
+        {
+            csp.AddDefaultSrc().Self();
+            csp.AddBaseUri().Self();
+            csp.AddFormAction().Self();
+            csp.AddFrameAncestors().None();
+            csp.AddObjectSrc().None();
+            csp.AddImgSrc().Self().Data();
+            csp.AddManifestSrc().Self();
+            csp.AddWorkerSrc().Self();
+            csp.AddScriptSrc().Self();
+            var style = csp.AddStyleSrc().Self();
+            var connect = csp.AddConnectSrc().Self();
+            if (isDevelopment)
+            {
+                // Vite dev server/HMR injects inline styles and uses websockets.
+                style.UnsafeInline();
+                connect.From("ws:").From("wss:");
+            }
+        });
+    });
+}
+
 static void ConfigurePipeline(WebApplication app, PerformanceTuningOptions performance)
 {
+    // Order matters: headers apply to every response (including errors),
+    // and scanner probes die before touching routing or telemetry.
+    ConfigureSecurityHeaders(app);
+    app.UseExploitProbeDenyList();
+
     var exposeOpenApi = app.Environment.IsDevelopment() || app.Configuration.GetValue<bool>("OpenApi:Enabled");
     if (exposeOpenApi)
     {
         app.MapOpenApi();
+
+        // RFC 9727 API catalog: machine-readable discovery of this host's API docs.
+        var apiCatalog = new Dictionary<string, object>
+        {
+            ["linkset"] = new[]
+            {
+                new Dictionary<string, object>
+                {
+                    ["anchor"] = "/api",
+                    ["service-desc"] = new[]
+                    {
+                        new Dictionary<string, string>
+                        {
+                            ["href"] = "/openapi/v1.json",
+                            ["type"] = "application/json",
+                        },
+                    },
+                },
+            },
+        };
+        app.MapGet(
+            "/.well-known/api-catalog",
+            () => Results.Json(apiCatalog, contentType: "application/linkset+json"));
     }
 
     if (app.Environment.IsDevelopment())
     {
-        app.MapScalarApiReference();
+        app.MapScalarApiReference(options => options
+            .WithTitle("VueApp1 API")
+            .WithDefaultHttpClient(ScalarTarget.CSharp, ScalarClient.HttpClient));
     }
 
     app.UseExceptionHandler();
     app.UseStatusCodePages();
 
-    if (!app.Environment.IsDevelopment())
-    {
-        app.UseHsts();
-    }
-
+    // HSTS is emitted by the security headers policy above.
     app.UseHttpsRedirection();
     app.UseResponseCompression();
     app.UseRouting();
@@ -224,6 +350,10 @@ static void ConfigurePipeline(WebApplication app, PerformanceTuningOptions perfo
             return;
         }
 
+        // no-cache (revalidate, not "never cache") so deployments and service-worker
+        // updates propagate promptly; fingerprinted assets served by MapStaticAssets
+        // remain immutable-cached.
+        context.Response.Headers.CacheControl = "no-cache";
         var indexPath = Path.Combine(app.Environment.WebRootPath, "index.html");
         await context.Response.SendFileAsync(indexPath);
     });
@@ -235,6 +365,14 @@ internal sealed class PerformanceTuningOptions
     public OutputCachingSettings OutputCache { get; init; } = new();
     public RateLimitingSettings RateLimiting { get; init; } = new();
     public RequestTimeoutSettings RequestTimeout { get; init; } = new();
+    public RequestLimitSettings RequestLimits { get; init; } = new();
+}
+
+internal sealed class RequestLimitSettings
+{
+    public long MaxRequestBodySizeBytes { get; init; } = 10 * 1024 * 1024;
+    public double MinBodyDataRateBytesPerSecond { get; init; } = 100;
+    public int MinBodyDataRateGraceSeconds { get; init; } = 10;
 }
 
 internal sealed class OutputCachingSettings

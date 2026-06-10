@@ -8,6 +8,37 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <!--
+      NuGet audit policy: with TreatWarningsAsErrors=true, every NU190x advisory warning
+      becomes a restore ERROR. Auditing all (direct + transitive) packages is right for a
+      template, but blocking on *moderate* advisories means the repo breaks for everyone
+      the day any dependency gets a moderate CVE. Block on high/critical only; rely on
+      Dependabot to roll out fixes for moderates.
+    -->
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <NuGetAuditLevel>high</NuGetAuditLevel>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Restore reproducibility">
+    <!--
+      Commit packages.lock.json per project and restore in locked mode in CI
+      (see ci.yml): a tampered or re-published package version cannot slip in
+      between restores. Scoped to .csproj so the JavaScript esproj is unaffected.
+      After changing versions in Directory.Packages.props, refresh the lock files
+      with: dotnet restore -p:RestoreForceEvaluate=true
+      (XML comments cannot contain double hyphens, hence the property form of
+      the locked-mode and force-evaluate CLI flags here.)
+    -->
+    <RestorePackagesWithLockFile Condition="'$(MSBuildProjectExtension)' == '.csproj'">true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Build performance">
+    <AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
+    <ProduceReferenceAssembly>true</ProduceReferenceAssembly>
+    <!-- Show xUnit v3 test failure details inline in dotnet test output. -->
+    <TestingPlatformShowTestsFailure>true</TestingPlatformShowTestsFailure>
+    <!-- Skip static web asset compression in Debug builds (dev-loop speed). -->
+    <CompressionEnabled Condition="'$(Configuration)' == 'Debug'">false</CompressionEnabled>
   </PropertyGroup>
 
 </Project>

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": "^20.19.0 || >=22.12.0"
+    "node": "^22.13.0 || >=24.0.0"
   },
   "scripts": {
     "dev": "vite",
@@ -20,31 +20,39 @@
     "test:coverage": "vitest --run --coverage",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
-    "check": "npm run lint:check && npm run format:check && npm run type-check && npm run test"
+    "check": "npm run lint:check && npm run format:check && npm run type-check && npm run test",
+    "test:ci": "vitest run --coverage --reporter=junit --reporter=default --outputFile=test-results/vitest-results.xml",
+    "rebuild-trusted": "npm rebuild --ignore-scripts=false fsevents sharp",
+    "generate-pwa-assets": "pwa-assets-generator --preset minimal-2023 public/logo.svg",
+    "check:fast": "run-p lint:check format:check type-check test"
   },
   "dependencies": {
     "pinia": "^3.0.4",
-    "vue": "^3.5.28",
-    "vue-router": "^5.0.2"
+    "vue": "^3.5.35",
+    "vue-router": "^5.1.0",
+    "workbox-window": "^7.4.1"
   },
   "devDependencies": {
-    "@tsconfig/node22": "^22.0.5",
-    "@types/node": "^24.10.12",
-    "@vitejs/plugin-vue": "^6.0.4",
-    "@vitest/coverage-v8": "^4.0.18",
-    "@vue/eslint-config-typescript": "^14.6.0",
-    "@vue/test-utils": "^2.4.6",
-    "@vue/tsconfig": "^0.8.1",
-    "eslint": "^9.39.2",
-    "eslint-plugin-vue": "~10.7.0",
-    "jiti": "^2.6.1",
-    "jsdom": "^26.1.0",
+    "@tsconfig/node24": "^24.0.4",
+    "@types/node": "^24.13.1",
+    "@vite-pwa/assets-generator": "^1.0.2",
+    "@vitejs/plugin-vue": "^6.0.7",
+    "@vitest/coverage-v8": "^4.1.8",
+    "@vue/eslint-config-typescript": "^14.8.0",
+    "@vue/test-utils": "^2.4.11",
+    "@vue/tsconfig": "^0.9.1",
+    "eslint": "^10.4.1",
+    "eslint-plugin-vue": "~10.9.2",
+    "eslint-plugin-vuejs-accessibility": "^2.5.0",
+    "jiti": "^2.7.0",
+    "jsdom": "^29.1.1",
     "npm-run-all2": "^8.0.4",
-    "prettier": "^3.8.1",
-    "typescript": "~5.9.3",
-    "vite": "^7.3.1",
-    "vite-plugin-vue-devtools": "^8.0.6",
-    "vitest": "^4.0.18",
-    "vue-tsc": "^3.2.4"
+    "prettier": "^3.8.4",
+    "typescript": "~6.0.3",
+    "vite": "^8.0.16",
+    "vite-plugin-pwa": "^1.3.0",
+    "vite-plugin-vue-devtools": "^8.1.2",
+    "vitest": "^4.1.8",
+    "vue-tsc": "^3.3.4"
   }
 }

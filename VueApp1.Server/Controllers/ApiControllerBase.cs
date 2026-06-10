@@ -4,6 +4,7 @@ namespace VueApp1.Server.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Produces("application/json")]
 public abstract class ApiControllerBase : ControllerBase
 {
     protected ActionResult HandleServiceResponse(ServiceResponse response, Func<ActionResult> onSuccess)

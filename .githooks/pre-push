@@ -1,0 +1,13 @@
+#!/bin/bash
+# Blocks direct pushes to master/main — use a feature branch + PR.
+# Installed by `npm run setup` (git config core.hooksPath .githooks).
+# Defense-in-depth: agent-runtime hooks (.claude/settings.json) cover one
+# agent; this covers every terminal and every agent runtime.
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [[ "$remote_ref" == "refs/heads/master" || "$remote_ref" == "refs/heads/main" ]]; then
+    echo "Direct push to master/main blocked — use a feature branch and a PR."
+    exit 1
+  fi
+done
+exit 0

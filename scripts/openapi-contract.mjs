@@ -35,6 +35,9 @@ async function run() {
   }
 
   const openApiDoc = await response.json();
+  // The servers array embeds the ephemeral localhost origin the document was
+  // harvested from — meaningless in a committed contract, so strip it.
+  delete openApiDoc.servers;
   const normalized = `${JSON.stringify(openApiDoc, null, 2)}\n`;
 
   if (checkMode) {

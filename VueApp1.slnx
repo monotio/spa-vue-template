@@ -1,0 +1,14 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="vueapp1.client/vueapp1.client.esproj">
+    <Build Solution="*|Any CPU" />
+    <Deploy Solution="*|Any CPU" />
+  </Project>
+  <Project Path="VueApp1.Server.IntegrationTests/VueApp1.Server.IntegrationTests.csproj" />
+  <Project Path="VueApp1.Server.UnitTests/VueApp1.Server.UnitTests.csproj" />
+  <Project Path="VueApp1.Server/VueApp1.Server.csproj" />
+</Solution>

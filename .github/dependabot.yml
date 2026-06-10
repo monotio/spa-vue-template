@@ -9,10 +9,19 @@ updates:
       timezone: "Etc/UTC"
     commit-message:
       prefix: "ci"
+    open-pull-requests-limit: 5
+    # Cooldown is the bot-PR analogue of a minimum release age: freshly
+    # published versions wait before being proposed, so registry compromises
+    # are usually yanked before a bump PR ever opens. Security updates bypass it.
+    cooldown:
+      default-days: 5
+    labels: ["dependencies"]
     groups:
       github-actions:
-        patterns:
-          - "*"
+        patterns: ["*"]
+        # Majors arrive as individual, reviewable PRs (an upload-artifact 4->7
+        # jump should never hide inside a grouped bump).
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: "npm"
     directory: "/vueapp1.client"
@@ -23,10 +32,15 @@ updates:
       timezone: "Etc/UTC"
     commit-message:
       prefix: "deps"
+    open-pull-requests-limit: 10
+    cooldown:
+      default-days: 5
+      semver-major-days: 14
+    labels: ["dependencies"]
     groups:
       frontend:
-        patterns:
-          - "*"
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: "nuget"
     directory: "/"
@@ -37,7 +51,17 @@ updates:
       timezone: "Etc/UTC"
     commit-message:
       prefix: "deps"
+    open-pull-requests-limit: 10
+    cooldown:
+      default-days: 5
+      semver-major-days: 14
+    labels: ["dependencies"]
+    ignore:
+      # ASP.NET Core 10's OpenAPI support compiles against Microsoft.OpenApi 2.x;
+      # 3.x is a breaking trap (see Directory.Packages.props).
+      - dependency-name: "Microsoft.OpenApi"
+        update-types: ["version-update:semver-major"]
     groups:
       dotnet:
-        patterns:
-          - "*"
+        patterns: ["*"]
+        update-types: ["minor", "patch"]

@@ -8,10 +8,10 @@ export const useWeatherStore = defineStore('weather', () => {
   const { getForecasts, isLoading } = useWeatherApi();
 
   const forecasts = ref<WeatherForecast[]>([]);
-  const error = ref<string | null>(null);
+  const error = ref<string>();
 
   async function load() {
-    error.value = null;
+    error.value = undefined;
     try {
       forecasts.value = await getForecasts();
     } catch (e) {
@@ -22,7 +22,7 @@ export const useWeatherStore = defineStore('weather', () => {
 
   function clear() {
     forecasts.value = [];
-    error.value = null;
+    error.value = undefined;
   }
 
   return { forecasts, error, isLoading, load, clear };

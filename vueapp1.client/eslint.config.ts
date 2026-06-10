@@ -1,6 +1,7 @@
 import { globalIgnores } from 'eslint/config';
 import { defineConfigWithVueTs, vueTsConfigs } from '@vue/eslint-config-typescript';
 import pluginVue from 'eslint-plugin-vue';
+import pluginVueA11y from 'eslint-plugin-vuejs-accessibility';
 
 export default defineConfigWithVueTs(
   {
@@ -12,6 +13,18 @@ export default defineConfigWithVueTs(
 
   pluginVue.configs['flat/recommended'],
   vueTsConfigs.recommendedTypeChecked,
+  pluginVueA11y.configs['flat/recommended'],
+
+  {
+    // Accessibility rules start as warnings: they guide without blocking.
+    // Promote to 'error' once your team is ready to hold the bar in CI.
+    name: 'app/a11y-warn-only',
+    rules: Object.fromEntries(
+      pluginVueA11y.configs['flat/recommended']
+        .flatMap((config) => ('rules' in config ? Object.keys(config.rules ?? {}) : []))
+        .map((rule) => [rule, 'warn']),
+    ),
+  },
 
   {
     name: 'app/strict-vue-rules',
@@ -47,7 +60,12 @@ export default defineConfigWithVueTs(
   {
     name: 'app/no-direct-fetch',
     files: ['src/**/*.{ts,mts,tsx,vue}'],
-    ignores: ['src/composables/useFetch.ts', 'src/**/__tests__/**'],
+    // ReloadPrompt fetches sw.js for update checks — infrastructure, not API data.
+    ignores: [
+      'src/composables/useFetch.ts',
+      'src/components/ReloadPrompt.vue',
+      'src/**/__tests__/**',
+    ],
     rules: {
       'no-restricted-globals': [
         'error',

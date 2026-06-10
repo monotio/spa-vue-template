@@ -1,0 +1,15 @@
+id: cs-no-direct-utcnow
+language: csharp
+severity: error
+message: Use the injected TimeProvider instead of DateTime/DateTimeOffset.UtcNow
+note: |
+  The template registers TimeProvider.System as a singleton precisely so time
+  is injectable and testable. Direct UtcNow makes tests time-dependent.
+  BAD:  var now = DateTime.UtcNow;
+  GOOD: var now = timeProvider.GetUtcNow().UtcDateTime;
+files:
+  - VueApp1.Server/**
+rule:
+  any:
+    - pattern: DateTime.UtcNow
+    - pattern: DateTimeOffset.UtcNow

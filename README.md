@@ -1,85 +1,110 @@
 # .NET 10 + Vue 3 SPA Template
 
-Production-oriented full-stack template for SPAs in 2026+: Vue 3 + TypeScript frontend and ASP.NET Core backend, with strict lint/type/test gates.
+[![CI](https://github.com/monotio/spa-vue-template/actions/workflows/ci.yml/badge.svg)](https://github.com/monotio/spa-vue-template/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/monotio/spa-vue-template/actions/workflows/codeql.yml/badge.svg)](https://github.com/monotio/spa-vue-template/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/monotio/spa-vue-template/badge)](https://scorecard.dev/viewer/?uri=github.com/monotio/spa-vue-template)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-## Tech Stack
+Golden boilerplate for a modern full-stack SPA/PWA: **Vue 3 + TypeScript 6 +
+Vite 8 (Rolldown)** frontend, **ASP.NET Core (.NET 10, C# 14)** backend, with
+strict quality gates, supply-chain hardening, and first-class support for
+agentic development — so you can start building features in minutes, not days.
 
-- Frontend: Vue 3, TypeScript, Vite 7, Vitest, Pinia, Vue Router
-- Backend: ASP.NET Core (.NET 10), C# latest, OpenAPI, ProblemDetails
-- Quality: ESLint flat config, Prettier, strict TS config, xUnit v3, CI checks
+## Getting started
 
-## Prerequisites
-
-- .NET SDK pinned by `global.json`
-- Node.js 22.12+
-
-## Quick Start
-
-```bash
-npm ci --prefix vueapp1.client
-dotnet restore
-npm run check
-```
-
-## Daily Commands
-
-Run from repo root.
+1. **Use this template** (button above) → the first push runs
+   `template-cleanup.yml`, which renames everything from `VueApp1` to your
+   repo's name and deletes the rename machinery.
+2. **Or clone manually** → `node scripts/rename.mjs MyApp --apply`
+   (dry-run without `--apply`), then delete the script.
+3. Install the toolchain (.NET SDK from `global.json`, Node from `.nvmrc` —
+   per-OS details in [SETUP.md](SETUP.md)), then:
 
 ```bash
-npm run dev:server      # Start backend (https://localhost:7191)
-npm run dev:client      # Start Vite dev server (https://localhost:57292)
-
-npm run check           # Full validation used before commit
-npm run build           # Build backend + frontend
-npm run test            # Frontend tests + backend tests
-npm run test:load       # Local sustained-load smoke test
-
-npm run openapi:sync    # Generate docs/openapi/openapi.v1.json baseline
-npm run openapi:check   # Verify runtime contract matches baseline
+npm run setup    # git hooks + npm ci + trusted rebuilds + locked NuGet restore
+npm run check    # the full validation gate — should be green out of the box
+npm run dev:server & npm run dev:client
 ```
 
-## Project Layout
+Codespaces/devcontainer users: just create the codespace — `.devcontainer/`
+provisions everything.
 
-```text
-VueApp1.Server/                    ASP.NET Core API
-VueApp1.Server.UnitTests/          Fast unit tests
-VueApp1.Server.IntegrationTests/   End-to-end API pipeline tests
-vueapp1.client/                    Vue app
-scripts/                           OpenAPI + load test tooling
+> After renaming: regenerate the PWA icons from your own logo
+> (`public/logo.svg` → `npm run generate-pwa-assets`).
+
+## What's included
+
+| Area | What you get |
+| --- | --- |
+| Frontend | Vue 3.5 Composition API, TypeScript 6 strict (`strictImportMetaEnv` + friends), Pinia, Vue Router 5 (scroll + focus management), ESLint 10 type-checked + Prettier, Vitest 4 with determinism pins (TZ, timeouts, storage shim) |
+| PWA | vite-plugin-pwa: installable app shell, offline precache, update prompt, icon pipeline — with the service worker correctly denied from `/api` routes |
+| Backend | Controllers + `ServiceResponse<T>` service layer, RFC 9457 ProblemDetails on every error (incl. unhandled exceptions with `traceId`), OpenAPI 3.1 + Scalar docs, output caching, rate limiting, HybridCache, request timeouts, health checks |
+| Security | Security headers + CSP, exploit-probe denylist, Kestrel body/rate limits, host-header-safe link generation, npm `ignore-scripts` + allow-list, NuGet lockfiles + source mapping + central package management |
+| API contract | `docs/openapi/openapi.v1.json` is committed; CI fails on drift (`npm run openapi:sync` to update) |
+| CI/CD | SHA-pinned actions, CodeQL (C# + TS), OpenSSF Scorecard, dependency review, PR-title lint, build provenance attestations, tuned Dependabot (grouped minors, solo majors, cooldowns), Windows leg on master |
+| Testing | xUnit v3 (unit + WebApplicationFactory integration), coverage gates, test wrappers with disk logs + signal-safe exits, anti-flake doctrine |
+| Agentic dev | `AGENTS.md` playbook (Claude Code reads it via `CLAUDE.md`), committed `.claude/` settings/hooks/skills, opt-in ast-grep guardrails, one-command setup, zero-secret boot |
+| Docs | Decision guides for [auth](docs/AUTH.md) and [database](docs/DATA.md), deep dives for [testing](docs/TESTING.md), [frontend](docs/FRONTEND.md), [API](docs/API.md), [config](docs/CONFIG.md), [patterns](docs/PATTERNS.md) |
+
+## Architecture
+
+```mermaid
+flowchart LR
+  subgraph Development
+    B[Browser] -->|https :57292| V[Vite dev server]
+    V -->|"proxy ^/api"| A1["ASP.NET Core API (https :7191)"]
+  end
+  subgraph Production
+    B2[Browser / installed PWA] -->|https| A2[ASP.NET Core]
+    A2 -->|"/api/*"| C[Controllers + services]
+    A2 -->|fallback| D["dist/ static assets + index.html (no-cache)"]
+  end
 ```
 
-## Backend Design
+## Daily commands
 
-- Controller + service separation (`ServiceResponse<T>` for consistent outcomes)
-- RFC 9457 ProblemDetails enabled globally
-- Health endpoint at `/health`
-- Server-Timing middleware for API request timing visibility
-- Performance config in `appsettings.json` for:
-  - output cache
-  - rate limiting
-  - request timeout policy toggle
-- OpenAPI endpoint available in Development and when `OpenApi:Enabled=true`
+```bash
+npm run check          # THE gate: lint + format + types + FE tests + build + OpenAPI + BE tests
+npm run check:fast     # parallelized iteration variant
+npm run test           # all tests; filtered: npm run test:backend -- --filter "..."
+npm run openapi:sync   # after API changes — commit the contract diff
+npm run test:load      # local sustained-load smoke test
+```
 
-## Frontend Design
+Full command/agent guidance: [AGENTS.md](AGENTS.md).
 
-- Strict TypeScript enabled (`exactOptionalPropertyTypes`, `noImplicitOverride`, `noUnused*`)
-- API access centralized via composables/services (direct `fetch` restricted by lint rule)
-- Feature-oriented structure (`pages`, `stores`, `services`, `composables`, `contracts`, `utils`)
-- Coverage thresholds enforced in Vitest config
+## Supply-chain notes you should know
 
-## OpenAPI Contract Workflow
+- **npm install scripts are disabled** (`.npmrc ignore-scripts=true`) — the
+  dominant npm attack vector is off by default. The flip side: a new
+  dependency that needs its postinstall must be added to the
+  `rebuild-trusted` allow-list in `vueapp1.client/package.json` (and that's
+  deliberately a visible, reviewable event). To opt out, delete the two
+  `.npmrc` files.
+- **Build provenance**: artifacts built on master are attested; verify with
+  `gh attestation verify <artifact> --repo <owner>/<repo>`.
+- **Microsoft.OpenApi stays 2.x** — documented trap, enforced via Dependabot
+  ignore + comments in `Directory.Packages.props`.
 
-`openapi-contract.mjs` starts the backend in `Testing`, fetches `/openapi/v1.json`, and compares it with `docs/openapi/openapi.v1.json`.
+## Deliberate non-decisions
 
-- Use `npm run openapi:sync` when API contracts intentionally change
-- CI uses `npm run openapi:check` to fail on uncommitted contract drift
+Lean by design — these are documented, not shipped:
 
-## CI Gates
+- **No database** → [docs/DATA.md](docs/DATA.md) maps EF Core into the
+  existing seams (health checks, Server-Timing, OTel, Testcontainers).
+- **No auth** → [docs/AUTH.md](docs/AUTH.md): cookies + Identity endpoints,
+  BFF for external IdPs, .NET 10 passkeys.
+- **No i18n** → add vue-i18n when needed; prebuild locale chunks at build
+  time rather than fetching translation JSON at runtime.
+- **No husky/lint-staged** → CI is the gate; the one git hook is pre-push
+  branch protection. No `packageManager`/corepack (npm-only; corepack left
+  Node ≥25).
+- **Watch list** (re-evaluate quarterly): Vue Vapor Mode, Vitest 5, oxlint
+  pre-pass, tsgo type-checking, xUnit v4, `dotnet new` template packaging —
+  rationale in [docs/FRONTEND.md](docs/FRONTEND.md) and
+  [docs/TESTING.md](docs/TESTING.md).
 
-CI runs:
+## License
 
-- frontend lint + format + type-check + tests
-- frontend/backend build
-- OpenAPI contract drift check
-- backend unit tests
-- backend integration tests with a coverage floor on server code
+MIT. Projects generated from this template may relicense freely — no
+attribution required.

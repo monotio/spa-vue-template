@@ -1,21 +1,33 @@
 name: Dependency Review
 
+# Blocks PRs that introduce dependencies with known high-severity
+# vulnerabilities, comparing the PR's dependency graph against the base.
+
 on:
   pull_request:
     branches: [master]
 
 permissions:
   contents: read
+  # Needed so the action can post a summary comment on the PR when it fails
+  # (comment-summary-in-pr below).
   pull-requests: write
+
+concurrency:
+  group: depreview-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   dependency-review:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
+      # Actions pinned to full commit SHAs — see ci.yml for the rationale.
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Dependency review
-        uses: actions/dependency-review-action@v4
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
         with:
           fail-on-severity: high
+          comment-summary-in-pr: on-failure

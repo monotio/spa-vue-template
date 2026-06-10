@@ -1,0 +1,14 @@
+id: cs-if-without-braces
+language: csharp
+severity: error
+message: Every control block gets braces, including single-statement if bodies
+note: |
+  House style (and .editorconfig csharp_prefer_braces): brace every block.
+  BAD:  if (x) return;
+  GOOD: if (x) { return; }
+rule:
+  kind: if_statement
+  not:
+    has:
+      field: consequence
+      kind: block
