@@ -1,0 +1,12 @@
+# Normalize all text to LF everywhere — committed artifacts (e.g. the OpenAPI
+# contract) are byte-compared against generated output in CI, and Prettier +
+# .editorconfig already mandate LF. Without this, Windows checkouts get CRLF
+# and the contract gate false-positives (caught by the Windows CI leg).
+* text=auto eol=lf
+
+# Binaries
+*.png binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary

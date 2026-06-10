@@ -43,7 +43,9 @@ async function run() {
   if (checkMode) {
     let current = '';
     try {
-      current = await readFile(outputPath, 'utf8');
+      // Tolerate CRLF checkouts (defense in depth alongside .gitattributes):
+      // the comparison is about contract content, not line endings.
+      current = (await readFile(outputPath, 'utf8')).replaceAll('\r\n', '\n');
     } catch (error) {
       if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
         console.error(`OpenAPI baseline file is missing: ${outputPath}`);
