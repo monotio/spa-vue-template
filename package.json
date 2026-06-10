@@ -2,7 +2,7 @@
   "private": true,
   "scripts": {
     "dev:client": "npm --prefix vueapp1.client run dev",
-    "dev:server": "dotnet run --project VueApp1.Server",
+    "dev:server": "dotnet run --project VueApp1.Server --launch-profile https",
     "build": "dotnet build && npm --prefix vueapp1.client run build",
     "test": "node scripts/run-vitest.mjs && node scripts/run-dotnet-test.mjs --no-build",
     "test:load": "node scripts/load-test.mjs",

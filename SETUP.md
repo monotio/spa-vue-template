@@ -33,6 +33,16 @@ npm run setup && npm run check
 WSL note: certs trusted in Windows are not trusted inside WSL (and vice
 versa) — run `dotnet dev-certs https` in the environment that runs the app.
 
+### Troubleshooting: browser says the dev cert is invalid
+
+The Vite dev server uses a cached export of the ASP.NET dev cert at
+`~/.aspnet/https/vueapp1.client.{pem,key}` (`%APPDATA%/ASP.NET/https` on
+Windows) and only re-exports it **when the files are missing**. If you have
+regenerated or re-trusted your dev certs since the export was made, the
+cached copy is no longer trusted and the browser shows a certificate
+interstitial. Fix: delete those two files and restart `npm run dev:client` —
+the current trusted cert is re-exported automatically.
+
 ## Cloud / Codespaces
 
 `.devcontainer/devcontainer.json` provisions everything (SDK image + Node 24

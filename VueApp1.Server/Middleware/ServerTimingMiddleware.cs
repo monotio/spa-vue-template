@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 
 namespace VueApp1.Server.Middleware;
 
@@ -36,7 +37,13 @@ public sealed class ServerTimingMiddleware(RequestDelegate next)
             // values — capturing them outside this callback silently reads
             // from a different context.
             var elapsed = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-            var entries = new List<string> { $"total;dur={elapsed:F1}" };
+            // Invariant culture: the Server-Timing spec requires a decimal POINT;
+            // culture-sensitive formatting emits "dur=0,9" on comma-decimal locales,
+            // which browsers mis-parse.
+            var entries = new List<string>
+            {
+                string.Create(CultureInfo.InvariantCulture, $"total;dur={elapsed:F1}"),
+            };
 
             var metrics = context.RequestServices.GetService<IServerTimingMetrics>();
             if (metrics is not null)
