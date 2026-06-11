@@ -25,6 +25,17 @@
     <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.15.1" />
     <!-- Unified L1 (in-memory) + optional L2 (distributed) cache with stampede protection. -->
     <PackageVersion Include="Microsoft.Extensions.Caching.Hybrid" Version="10.7.0" />
+    <!--
+      Official C# MCP SDK (Microsoft + Anthropic). Deliberately PINNED rather than
+      floated: the MCP spec is still revising its transport layer, and this SDK is
+      where those wire changes land — treat its Dependabot bumps as protocol
+      upgrades (run the McpEndpointTests suite, re-read docs/MCP.md). Verified: it
+      pulls no Microsoft.OpenApi (the 2.x hold below is unaffected).
+      ModelContextProtocol.Core carries the client + protocol types the test
+      projects use to exercise the endpoint at SDK level instead of wire level.
+    -->
+    <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="1.4.0" />
+    <PackageVersion Include="ModelContextProtocol.Core" Version="1.4.0" />
     <!-- De facto standard security headers middleware; ASP.NET Core ships none. -->
     <PackageVersion Include="NetEscapades.AspNetCore.SecurityHeaders" Version="1.3.1" />
     <PackageVersion Include="Scalar.AspNetCore" Version="2.16.2" />
