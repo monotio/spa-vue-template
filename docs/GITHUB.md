@@ -49,6 +49,32 @@ VM; the repo controls that environment through
   Copilot coding agent" docs for the exact semantics before loosening it.
 - Copilot reads `AGENTS.md` natively; no extra instruction file is needed.
 
+## Red CI: the retrieval contract (for agents)
+
+Get a CI failure in one or two tool calls instead of scraping the full log
+(this is the CI half of the local "read disk logs instead of re-running"
+discipline in AGENTS.md):
+
+1. Run id: `gh pr checks` or `gh run list --branch <branch> --limit 5`.
+2. **`gh run view <run-id> --log-failed`** — only the failed steps' output,
+   which for test steps already contains the per-test lines and assertion
+   diffs. (MCP-equipped runtimes: the GitHub MCP server's `get_job_logs`
+   with `failed_only` does the same in one call.)
+3. The **Failure digest** step appends `failed-step:` / `local-repro:` lines
+   to the job summary and to its own stdout. Note: the job summary has no
+   `gh`/REST read endpoint — don't try to fetch it; the digest's repro
+   mapping is simple anyway: every ci.yml step is one npm wrapper
+   (`lint` → `npm run lint:check`, `fe_tests` → `npm run test:frontend`,
+   `be_unit`/`be_integration` → `npm run test:backend`, bootstrap steps →
+   `npm run setup`, `skills_drift` → `npm run skills:sync`).
+4. Test outputs (JUnit XML + coverage) are uploaded on every run, red or
+   green: `gh run download <run-id> -n test-results-<os>` (e.g.
+   `test-results-ubuntu-latest`).
+5. Inline annotations are native, not bespoke: Vitest's `github-actions`
+   reporter (wired in `test:ci`) and the .NET SDK's auto-detected GitHub
+   logger both emit file/line annotations — don't add problem-matcher
+   plumbing for them.
+
 ## Review hygiene
 
 - **Bot/AI review comments are leads, not verdicts.** Triage them against the

@@ -38,6 +38,7 @@ jobs:
         # .agents/skills/ is a real-copy mirror of .claude/skills/ (the
         # cross-runtime discovery path; symlinks would break the Windows leg).
         # Edit the .claude copy, then run `npm run skills:sync`.
+        id: skills_drift
         shell: bash
         run: diff -r .claude/skills .agents/skills
 
@@ -57,9 +58,11 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - name: Install frontend dependencies
+        id: npm_ci
         run: npm ci
 
       - name: Rebuild trusted native packages
+        id: rebuild_trusted
         # .npmrc sets ignore-scripts=true (install scripts are the dominant npm
         # supply-chain attack vector — e.g. the Shai-Hulud worm, Sep 2025, with
         # 1700+ compromised package versions). Packages that legitimately need
@@ -68,32 +71,41 @@ jobs:
         run: npm --prefix vueapp1.client run rebuild-trusted
 
       - name: Restore .NET packages
+        id: nuget_restore
         # --locked-mode fails the build if packages.lock.json is out of sync with the
         # project files instead of silently resolving different package versions.
         run: dotnet restore --locked-mode
 
       - name: Lint
+        id: lint
         run: npm run lint:check
 
       - name: Format
+        id: format
         run: npm run format:check
 
       - name: Type check
+        id: typecheck
         run: npm run type-check
 
       - name: Frontend tests
+        id: fe_tests
         run: npm --prefix vueapp1.client run test:ci
 
       - name: Build
+        id: build
         run: npm run build
 
       - name: OpenAPI contract check
+        id: openapi
         run: npm run openapi:check
 
       - name: Backend unit tests
+        id: be_unit
         run: dotnet test VueApp1.Server.UnitTests/VueApp1.Server.UnitTests.csproj --no-build
 
       - name: Backend integration tests with coverage gate
+        id: be_integration
         run: >
           dotnet test VueApp1.Server.IntegrationTests/VueApp1.Server.IntegrationTests.csproj --no-build
           /p:CollectCoverage=true
@@ -113,3 +125,31 @@ jobs:
           # Loudly catch mis-wired output paths instead of silently uploading nothing.
           if-no-files-found: error
           retention-days: 7
+
+      - name: Failure digest
+        # Names the failed step + the local repro command in the job summary.
+        # The job summary has NO gh/REST read endpoint, so this is the
+        # human-facing half; agents retrieve failures via the contract in
+        # docs/GITHUB.md (gh run view --log-failed + the test-results artifact).
+        if: failure()
+        shell: bash
+        env:
+          STEPS_JSON: ${{ toJSON(steps) }}
+        run: |
+          digest=$(echo "$STEPS_JSON" | jq -r '
+            { skills_drift: "npm run skills:sync  (then commit the mirror)",
+              npm_ci: "npm run setup", rebuild_trusted: "npm run setup", nuget_restore: "npm run setup",
+              lint: "npm run lint:check", format: "npm run format:check", typecheck: "npm run type-check",
+              fe_tests: "npm run test:frontend", build: "npm run build", openapi: "npm run openapi:check",
+              be_unit: "npm run test:backend", be_integration: "npm run test:backend -- --coverage" } as $repro
+            | to_entries[] | select(.value.outcome == "failure")
+            | "failed-step: \(.key)\nlocal-repro: \($repro[.key] // "npm run check")"')
+          {
+            echo "## CI failure digest (${{ matrix.os }})"
+            echo '```'
+            echo "$digest"
+            echo "full-log: gh run view ${{ github.run_id }} --log-failed"
+            echo "artifact: test-results-${{ matrix.os }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "$digest"
