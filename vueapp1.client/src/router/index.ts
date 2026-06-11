@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router';
+import HomePage from '@/pages/HomePage.vue';
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -9,9 +10,13 @@ const router = createRouter({
   },
   routes: [
     {
+      // The default route is imported eagerly: lazy-loading it costs a cold
+      // visitor one extra sequential round trip (download+parse the main
+      // bundle before even DISCOVERING the home chunk). Keep rarely-visited
+      // pages lazy; keep the landing page in the main bundle.
       path: '/',
       name: 'home',
-      component: () => import('@/pages/HomePage.vue'),
+      component: HomePage,
     },
     {
       path: '/weather',
