@@ -13,7 +13,9 @@ RUN npm run build-only -w vueapp1.client
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS server-build
 WORKDIR /src
-COPY global.json nuget.config Directory.Build.props Directory.Packages.props ./
+# BannedSymbols.txt is wired in via Directory.Build.props (AdditionalFiles);
+# the compiler hard-fails (CS2001) without it.
+COPY global.json nuget.config Directory.Build.props Directory.Packages.props BannedSymbols.txt ./
 COPY VueApp1.Server/VueApp1.Server.csproj VueApp1.Server/packages.lock.json VueApp1.Server/
 # ExcludeSpaReference: the SPA is built in the node stage above; without it
 # the static-web-assets pipeline evaluates the esproj and demands Node.js.
