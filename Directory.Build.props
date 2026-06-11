@@ -32,6 +32,18 @@
     <RestorePackagesWithLockFile Condition="'$(MSBuildProjectExtension)' == '.csproj'">true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
+  <ItemGroup Label="Banned APIs" Condition="'$(MSBuildProjectExtension)' == '.csproj'">
+    <!--
+      BannedSymbols.txt + Microsoft.CodeAnalysis.BannedApiAnalyzers (a
+      GlobalPackageReference in Directory.Packages.props) compile the
+      playbook's most important prose rules into the build: direct wall-clock
+      reads and sync-over-async are RS0030 compile errors whose messages name
+      the sanctioned alternative. Add new entries there when a recurring
+      mistake has a single blessed replacement.
+    -->
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" />
+  </ItemGroup>
+
   <PropertyGroup Label="Build performance">
     <AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
     <ProduceReferenceAssembly>true</ProduceReferenceAssembly>

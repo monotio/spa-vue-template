@@ -107,6 +107,8 @@ Production-grade SPA template:
 - Modern C#: primary constructors, records, collection expressions `[1, 2]`,
   file-scoped namespaces, braces on every control block.
 - **Never `DateTime.UtcNow`** — inject `TimeProvider` (registered as singleton).
+  Build-enforced: `BannedSymbols.txt` (BannedApiAnalyzers) makes wall-clock
+  reads and sync-over-async (`Task<T>.Result`, `Task.Wait`) compile errors.
 - Prefer `[LoggerMessage]` source-generated logging (see the middleware and
   exception handler for the pattern); pass `PathString`/lazy values, not
   eagerly formatted strings (CA1873).

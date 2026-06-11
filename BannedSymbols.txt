@@ -1,0 +1,11 @@
+P:System.DateTime.Now;Inject TimeProvider and use GetLocalNow() — direct wall-clock reads make code untestable (AGENTS.md: never DateTime.Now/UtcNow)
+P:System.DateTime.UtcNow;Inject TimeProvider and use GetUtcNow() — direct wall-clock reads make code untestable (AGENTS.md: never DateTime.Now/UtcNow)
+P:System.DateTimeOffset.Now;Inject TimeProvider and use GetLocalNow() — direct wall-clock reads make code untestable
+P:System.DateTimeOffset.UtcNow;Inject TimeProvider and use GetUtcNow() — direct wall-clock reads make code untestable
+P:System.Threading.Tasks.Task`1.Result;Sync-over-async blocks a thread-pool thread and can deadlock — await the task instead
+M:System.Threading.Tasks.Task.Wait;Sync-over-async blocks a thread-pool thread and can deadlock — await the task instead
+M:System.Threading.Tasks.Task.Wait(System.TimeSpan);Sync-over-async blocks a thread-pool thread and can deadlock — await the task (WaitAsync for timeouts)
+M:System.Threading.Tasks.Task.Wait(System.Int32);Sync-over-async blocks a thread-pool thread and can deadlock — await the task (WaitAsync for timeouts)
+M:System.Threading.Tasks.Task.Wait(System.Threading.CancellationToken);Sync-over-async blocks a thread-pool thread and can deadlock — await the task instead
+M:System.Threading.Tasks.Task.Wait(System.TimeSpan,System.Threading.CancellationToken);Sync-over-async blocks a thread-pool thread and can deadlock — await the task (WaitAsync for timeouts)
+M:System.Threading.Tasks.Task.Wait(System.Int32,System.Threading.CancellationToken);Sync-over-async blocks a thread-pool thread and can deadlock — await the task (WaitAsync for timeouts)

@@ -2,19 +2,30 @@ using Scalar.AspNetCore;
 using System.Globalization;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using VueApp1.Server;
 using VueApp1.Server.ExceptionHandlers;
 using VueApp1.Server.Middleware;
 using VueApp1.Server.Services;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Fail fast on configuration drift: an unknown key under "Performance" fails
+// the bind (ErrorOnUnknownConfiguration) and invalid values throw HERE — this
+// instance configures the host itself (Kestrel limits, caches, rate limiter)
+// before Build(), so it cannot wait for the ValidateOnStart() pass that
+// guards the DI-resolved copy in SetupOptionsValidation.
 var performance = builder.Configuration.GetSection(PerformanceTuningOptions.SectionName)
-                      .Get<PerformanceTuningOptions>() ??
-                  new PerformanceTuningOptions();
+        .Get<PerformanceTuningOptions>(binder => binder.ErrorOnUnknownConfiguration = true)
+    ?? new PerformanceTuningOptions();
+ThrowIfInvalid<PerformanceTuningOptions>(
+    new PerformanceTuningOptionsValidator().Validate(name: null, performance));
 
 // -- Services --
+SetupOptionsValidation(builder);
 SetupApi(builder);
 SetupKestrelLimits(builder, performance);
 SetupCors(builder);
@@ -39,6 +50,37 @@ ConfigurePipeline(app, performance);
 app.Run();
 
 // ---------------------------------------------------------------------------
+
+static void SetupOptionsValidation(WebApplicationBuilder builder)
+{
+    // The backend twin of the frontend's strictImportMetaEnv: configuration is
+    // a validated contract. Bind + ValidateOnStart kill the host during
+    // startup (pre-traffic) with every violation listed, instead of running
+    // on silent defaults until rate limits or generated links misbehave in
+    // production. Bind new options classes the same way.
+    builder.Services.AddSingleton<IValidateOptions<PerformanceTuningOptions>, PerformanceTuningOptionsValidator>();
+    builder.Services.AddOptions<PerformanceTuningOptions>()
+        .Bind(
+            builder.Configuration.GetSection(PerformanceTuningOptions.SectionName),
+            binder => binder.ErrorOnUnknownConfiguration = true)
+        .ValidateOnStart();
+
+    builder.Services.AddSingleton<IValidateOptions<PublicUriOptions>, PublicUriOptionsValidator>();
+    builder.Services.AddOptions<PublicUriOptions>()
+        .Bind(
+            builder.Configuration.GetSection(PublicUriOptions.SectionName),
+            binder => binder.ErrorOnUnknownConfiguration = true)
+        .ValidateOnStart();
+}
+
+static void ThrowIfInvalid<TOptions>(ValidateOptionsResult validation)
+{
+    if (validation.Failed)
+    {
+        throw new OptionsValidationException(
+            Options.DefaultName, typeof(TOptions), validation.Failures);
+    }
+}
 
 static void SetupApi(WebApplicationBuilder builder)
 {
@@ -70,9 +112,8 @@ static void SetupApi(WebApplicationBuilder builder)
     // builder.Services.AddHttpClient("backend").AddStandardResilienceHandler();
     builder.Services.AddScoped<IWeatherForecastService, WeatherForecastService>();
     // Host-header-injection-safe absolute links (emails, notifications):
-    // generated from the configured PublicUri, never from request headers.
-    builder.Services.Configure<PublicUriOptions>(
-        builder.Configuration.GetSection(PublicUriOptions.SectionName));
+    // generated from the configured PublicUri (bound + validated in
+    // SetupOptionsValidation), never from request headers.
     builder.Services.AddSingleton<IUriLinkGenerator, UriLinkGenerator>();
 }
 
@@ -410,42 +451,4 @@ static void ConfigurePipeline(WebApplication app, PerformanceTuningOptions perfo
     {
         OnPrepareResponse = ctx => ctx.Context.Response.Headers.CacheControl = "no-cache",
     });
-}
-
-internal sealed class PerformanceTuningOptions
-{
-    public const string SectionName = "Performance";
-    public OutputCachingSettings OutputCache { get; init; } = new();
-    public RateLimitingSettings RateLimiting { get; init; } = new();
-    public RequestTimeoutSettings RequestTimeout { get; init; } = new();
-    public RequestLimitSettings RequestLimits { get; init; } = new();
-}
-
-internal sealed class RequestLimitSettings
-{
-    public long MaxRequestBodySizeBytes { get; init; } = 10 * 1024 * 1024;
-    public double MinBodyDataRateBytesPerSecond { get; init; } = 100;
-    public int MinBodyDataRateGraceSeconds { get; init; } = 10;
-}
-
-internal sealed class OutputCachingSettings
-{
-    public int DefaultExpirationSeconds { get; init; } = 30;
-    public int ReadExpirationSeconds { get; init; } = 30;
-    public long SizeLimitBytes { get; init; } = 64 * 1024 * 1024;
-    public long MaximumBodySizeBytes { get; init; } = 4 * 1024 * 1024;
-}
-
-internal sealed class RateLimitingSettings
-{
-    public int PermitLimit { get; init; } = 5000;
-    public int QueueLimit { get; init; } = 100;
-    public int WindowSeconds { get; init; } = 60;
-}
-
-internal sealed class RequestTimeoutSettings
-{
-    public bool Enabled { get; init; }
-    public int DefaultTimeoutSeconds { get; init; } = 10;
-    public int LongRunningTimeoutSeconds { get; init; } = 30;
 }

@@ -45,6 +45,29 @@ Performance__RateLimiting__PermitLimit=1000
 OpenTelemetry__Otlp__Endpoint=http://collector:4317
 ```
 
+### Options are validated at boot (fail fast)
+
+The backend twin of `strictImportMetaEnv` on the frontend: configuration is a
+validated contract, not a best-effort guess. `Performance` and `PublicUri` are
+bound with `AddOptions<T>().Bind(...).ValidateOnStart()` plus a hand-written
+`IValidateOptions<T>` validator for range and cross-field invariants (see
+`PerformanceTuningOptionsValidator`).
+
+- **Unknown keys fail the bind** (`ErrorOnUnknownConfiguration`): a typo like
+  `Performance__RateLimitting__PermitLimit` is a boot error naming the
+  unrecognized property — not a silent fallback to defaults.
+- **Invalid values fail at host start** (`ValidateOnStart`), pre-traffic, with
+  every violation listed in one `OptionsValidationException` and each message
+  naming the exact configuration key.
+- `Performance` is also consumed *before* `Build()` (it configures Kestrel,
+  caching and rate limiting), so Program.cs validates that eager instance
+  directly — `ValidateOnStart` alone only guards the DI-resolved copy.
+
+When adding an options class: bind it in `SetupOptionsValidation` the same
+way, write a validator if any value has an invariant worth a precise boot
+error, and keep the committed defaults valid — the zero-secrets boot below is
+a design goal.
+
 ### Test environment
 
 The integration tests (`WebApplicationFactory`) run with the `Testing`

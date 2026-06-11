@@ -32,6 +32,20 @@
     <PackageVersion Include="Scalar.AspNetCore.Microsoft" Version="2.16.2" />
   </ItemGroup>
 
+  <ItemGroup Label="Build-time guardrails">
+    <!--
+      Banned-API gate: together with BannedSymbols.txt (repo root, wired in
+      Directory.Build.props) this turns the playbook's TimeProvider and
+      sync-over-async rules into compile errors (RS0030) — TreatWarningsAsErrors
+      makes every hit fail the build, and each entry's message names the fix.
+      Conditioned to .csproj so the JavaScript esproj never sees an analyzer
+      reference it cannot use.
+    -->
+    <GlobalPackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers"
+                            Version="4.14.0"
+                            Condition="'$(MSBuildProjectExtension)' == '.csproj'" />
+  </ItemGroup>
+
   <ItemGroup Label="Test packages">
     <!--
       coverlet.msbuild powers the CI coverage threshold gate (/p:Threshold);

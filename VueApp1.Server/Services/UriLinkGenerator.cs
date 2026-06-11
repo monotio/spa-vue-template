@@ -11,6 +11,33 @@ public sealed class PublicUriOptions
 }
 
 /// <summary>
+/// Boot-time validation for <see cref="PublicUriOptions"/> (ValidateOnStart in
+/// Program.cs). Without it, an unset or relative BaseUri surfaces only when
+/// the first absolute link is generated — <see cref="UriLinkGenerator"/>
+/// throws lazily in its constructor.
+/// </summary>
+public sealed class PublicUriOptionsValidator : IValidateOptions<PublicUriOptions>
+{
+    public ValidateOptionsResult Validate(string? name, PublicUriOptions options)
+    {
+        if (string.IsNullOrWhiteSpace(options.BaseUri))
+        {
+            return ValidateOptionsResult.Fail(
+                "PublicUri:BaseUri must be set to an absolute http(s) URI, e.g. https://app.example.com.");
+        }
+
+        if (!Uri.TryCreate(options.BaseUri, UriKind.Absolute, out var baseUri)
+            || (baseUri.Scheme != Uri.UriSchemeHttp && baseUri.Scheme != Uri.UriSchemeHttps))
+        {
+            return ValidateOptionsResult.Fail(
+                $"PublicUri:BaseUri must be an absolute http(s) URI; got '{options.BaseUri}'.");
+        }
+
+        return ValidateOptionsResult.Success;
+    }
+}
+
+/// <summary>
 /// Generates absolute URIs from the configured public base URI instead of the
 /// incoming Host header. Links that leave the request context (emails,
 /// notifications, QR codes) must never be derived from request headers — the
