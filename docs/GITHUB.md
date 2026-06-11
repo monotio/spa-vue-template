@@ -93,6 +93,48 @@ discipline in AGENTS.md):
   individually rather than one mega-fixup — reviewers can re-check
   comment-by-comment.
 
+## Committed planning artifacts (PRDs)
+
+Agent-built features fail at planning more often than at typing. For
+complex features, commit the plan as `prds/YYYY-MM-feature.md` *before*
+implementation:
+
+- **Sections that earn their keep**: problem statement, decision table of
+  approaches considered, phased implementation plan, testing strategy, edge
+  cases, explicit out-of-scope.
+- **Ground the PRD in this repo's docs** — cite the AGENTS.md/docs/*.md
+  conventions it must follow, so any implementing agent (a different
+  vendor's included) or human produces conforming code from the artifact
+  alone.
+- **Commit agent-generated plans/specs too** instead of leaving them in
+  chat: git history is the archaeology a transcript never provides, and a
+  committed plan is reviewable *before* the implementation exists.
+- **When to skip the ceremony**: single-file changes, bug fixes with a
+  failing test, anything one `npm run check` cycle validates. The PRD is for
+  multi-session, multi-layer work.
+
+## Comment hygiene before merging agent-authored branches
+
+Long-lived agent-driven branches accumulate comment debris that reads as
+noise — or misdirection — on the default branch. Sweep the diff's comments
+before merge:
+
+- **Delete outright**: references to planning artifacts (PRD sections,
+  phase/roadmap markers like "P2/F3"), PR numbers, branch names — context
+  that does not exist for a reader of the default branch.
+- **Rewrite backward-looking narration into present-tense invariants** —
+  narration explains a diff; an invariant explains the code:
+  - Before: `// Switched from polling to a watcher because polling missed fast updates (PRD §4.2).`
+  - After: `// A watcher, not polling: sub-interval updates must not be missed.`
+- **Exception and log message strings count as comments** — operators
+  reading logs have even less context than code readers; no
+  "phase 2 fallback" in a runtime string.
+- **Preserve**: genuine invariants, external-SDK quirks, forward-looking
+  warnings ("this breaks if…") — the comments the next agent needs.
+
+Automated PR-trimming passes catch dead code but reliably miss narrative
+comments and runtime strings; this sweep is a manual review pass.
+
 ## Session hygiene (for agent-driven work)
 
 - Leaving work mid-task: commit WIP to the feature branch with a `wip:`

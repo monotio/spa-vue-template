@@ -51,6 +51,35 @@ generated file or add a codegen step before `vue-tsc` in CI and the root
 and any tests referencing named routes. The template doesn't choose this for
 you; file-based typing is real value if your app grows many routes.
 
+## URL-as-state for tabs, panels, and filters
+
+UI state worth sharing or surviving a reload (active tab, open panel, list
+filters) belongs in the query string — adopt one convention instead of
+letting each page hand-roll it:
+
+```ts
+export function useRouteQueryParam(name: string, defaultValue: string) {
+  const route = useRoute();
+  const router = useRouter();
+  return computed<string>({
+    get: () => {
+      const value = route.query[name];
+      return typeof value === 'string' ? value : defaultValue;
+    },
+    set: (value) => {
+      const query = { ...route.query };
+      if (value === defaultValue) delete query[name];
+      else query[name] = value;
+      void router.replace({ query });
+    },
+  });
+}
+```
+
+`@vueuse/router`'s `useRouteQuery` is the off-the-shelf equivalent (verify
+its default-omission behavior before swapping); the globally mocked router
+composables (src/test/setup.ts) make this testable with no extra setup.
+
 ## Data fetching
 
 `useFetch` is deliberately hand-rolled: it teaches the RFC 9457 ProblemDetails
@@ -259,6 +288,49 @@ for human-started servers too. Two gotchas: the object form defaults
 `logLevels` to `[]` (silently nothing) so the levels are spelled out, and
 forwarding needs a connected browser session — it complements browser
 tooling, it doesn't replace it.
+
+## Browser telemetry (opt-in recipe)
+
+The backend is OTel-instrumented (docs/API.md "Observability"), but the
+browser half of an incident — JS errors, slow fetches, the user's actual
+page view — is invisible until you add RUM, and FE/BE traces can't be
+stitched. Vendor-neutral default: `@opentelemetry/sdk-trace-web` + its fetch
+instrumentation (or Grafana Faro; vendor RUM SDKs wrap the same ideas). The
+gotchas that cost a debugging session each when learned live:
+
+- **Initialize before `app.mount()`**, and config-gate it behind a `VITE_`
+  endpoint/flag declared in `env.d.ts` — dev and test runs must make ZERO
+  telemetry network calls.
+- **Trace-context bridging is the point**: propagate W3C `traceparent` on
+  same-origin `/api` fetches so browser spans join the SAME distributed
+  trace as the backend. Scope propagation to your own origin ONLY — a
+  wildcard attaches the header to third-party requests, forcing CORS
+  preflights that break them.
+- SPA route changes are your page views (`router.afterEach`);
+  `window.onerror` + `unhandledrejection` are the error feed.
+- Tag every browser item with its own service/role name so the browser and
+  server tiers partition cleanly in the tracing backend.
+- CSP: the collector endpoint must be added to `connect-src`
+  (`ConfigureSecurityHeaders` in Program.cs); consent-gate any
+  cookie/session identifiers the SDK wants to set.
+
+## Browser-support policy: Baseline Widely Available
+
+The compat contract is explicit instead of implied: the template targets
+**Baseline Widely Available** — exactly what Vite 8's default `build.target`
+(`'baseline-widely-available'`) enforces at transform time, and what the
+committed `vueapp1.client/.browserslistrc` (`baseline widely available`, a
+native browserslist query) declares for any future tool that reads
+browserslist (autoprefixer, eslint-plugin-compat, …). One policy, declared
+once, tool-readable. Rule of thumb when reaching for a web API:
+
+- **Baseline Widely Available** → use it unguarded, no polyfill.
+- **Baseline Newly Available** (e.g. View Transitions) → feature-detect and
+  degrade gracefully; never a hard dependency.
+- **Below Baseline** → experimental; needs a justification comment.
+
+If your audience genuinely includes older browsers, change the build target
+and `.browserslistrc` together — they must tell the same story.
 
 ## Bundle analysis
 

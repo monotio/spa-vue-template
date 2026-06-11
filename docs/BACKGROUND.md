@@ -52,6 +52,31 @@ Scheduler-agnostic rules that only reveal themselves as production incidents:
    before a retryable rethrow (or attempt 2 holds a lease attempt 1 already
    released). This class of bug passes every single-attempt test you write.
 
+## Recurring-job discipline
+
+Operational rules for the cron/recurring tier (Hangfire/Quartz/TickerQ)
+that are otherwise learned mid-incident:
+
+- **Sweep-style jobs are their own retry**: disable the scheduler's retry
+  ladder (Hangfire: `Attempts = 0`) and make each run an idempotent bounded
+  batch — the next scheduled run IS the retry; a retry ladder on a sweep is
+  a retry storm.
+- **Every recurring job gets a concurrency lock and a stable name constant**
+  (`nameof`-derived): a renamed job id silently orphans the old registration
+  and double-registers the new one.
+- **No-op runs log at Trace**, not Information — a sweep that found nothing
+  is dashboard noise 95 times a day.
+- **Heavy drains self-schedule their follow-up run** and keep the cron only
+  as the safety net — cranking cron frequency for throughput couples your
+  load to the clock.
+- **A typed non-retryable exception short-circuits the ladder**: validation
+  and permanently-bad-input failures must die on attempt 1, not burn the
+  default retry budget first.
+- **Build kill switches before you need them**: one env-var to pause all
+  workers, one to pick up nothing, both checked at job pickup — a bad deploy
+  plus at-least-once retries is how outages compound, and mid-incident is
+  too late to add the brake.
+
 ## When you adopt a scheduler
 
 - Keep every job idempotent — at-least-once delivery means it WILL run twice.
