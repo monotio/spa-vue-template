@@ -75,6 +75,15 @@ public class McpEndpointTests(IntegrationTestWebApplicationFactory factory)
         Assert.True(annotations.IdempotentHint);
         Assert.False(annotations.DestructiveHint);
         Assert.False(annotations.OpenWorldHint);
+
+        // OutputSchemaType on a CallToolResult-returning tool: the schema is
+        // advertised, and because the tool's value type is a non-object the
+        // SDK wraps it in a required "result" property — the exact shape
+        // McpToolResults.Success() emits.
+        var outputSchema = tool.ProtocolTool.OutputSchema;
+        Assert.NotNull(outputSchema);
+        Assert.Equal("object", outputSchema.Value.GetProperty("type").GetString());
+        Assert.True(outputSchema.Value.GetProperty("properties").TryGetProperty("result", out _));
     }
 
     [Fact]
@@ -90,7 +99,12 @@ public class McpEndpointTests(IntegrationTestWebApplicationFactory factory)
         Assert.NotEqual(true, result.IsError);
         Assert.NotNull(result.StructuredContent);
 
-        var forecasts = result.StructuredContent.Value;
+        // structuredContent must be a JSON OBJECT (spec; SEP-2106 proposes
+        // relaxing this), so the array value arrives wrapped as
+        // { "result": [...] } — conforming to the advertised outputSchema.
+        var structured = result.StructuredContent.Value;
+        Assert.Equal(JsonValueKind.Object, structured.ValueKind);
+        var forecasts = structured.GetProperty("result");
         Assert.Equal(JsonValueKind.Array, forecasts.ValueKind);
         Assert.Equal(5, forecasts.GetArrayLength());
         var first = forecasts[0];
@@ -101,10 +115,11 @@ public class McpEndpointTests(IntegrationTestWebApplicationFactory factory)
         Assert.True(first.TryGetProperty("temperatureF", out _));
         Assert.True(first.TryGetProperty("summary", out _));
 
-        // Dual emission: the text block carries the same JSON for runtimes
-        // that only surface text content.
+        // Dual emission: the text block carries the RAW (unwrapped) value
+        // JSON for runtimes that only surface text content.
         var textBlock = result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().Single();
         using var document = JsonDocument.Parse(textBlock.Text);
+        Assert.Equal(JsonValueKind.Array, document.RootElement.ValueKind);
         Assert.Equal(5, document.RootElement.GetArrayLength());
     }
 
@@ -243,10 +258,14 @@ public class McpEndpointTests(IntegrationTestWebApplicationFactory factory)
         using var httpClient = factory.CreateClient();
         using var cts = CreateRequestCts();
 
-        await Assert.ThrowsAnyAsync<Exception>(async () =>
+        var exception = await Assert.ThrowsAnyAsync<Exception>(async () =>
         {
             await using var client = await ConnectAsync(httpClient, cts.Token);
         });
+
+        // A transport/protocol failure proves the gate; a cancellation would
+        // only prove the 30s safety timeout fired — don't let it pass.
+        Assert.IsNotAssignableFrom<OperationCanceledException>(exception);
     }
 
     private sealed class NotFoundWeatherForecastService : IWeatherForecastService

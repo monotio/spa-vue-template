@@ -343,8 +343,9 @@ static void SetupMcp(WebApplicationBuilder builder)
             // error envelope (docs/MCP.md).
             options.ServerInstructions =
                 "Tools delegate to the same service layer as the REST API. "
-                + "Successful calls return JSON in structuredContent (mirrored as text). "
-                + "Failures set isError with a JSON envelope { code, type?, title?, detail? }; "
+                + "Successful calls return JSON in structuredContent (non-object values wrapped as "
+                + "{ result: ... }, mirrored as raw JSON text). "
+                + "Failures set isError with a JSON envelope { code, status?, type?, title?, detail? }; "
                 + "branch on the stable `code` (e.g. not_found, invalid_parameter, conflict, rate_limited) "
                 + "instead of parsing messages, and back off before retrying rate_limited.";
         })

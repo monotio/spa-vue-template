@@ -28,7 +28,8 @@ public class McpToolResultsTests
         Assert.Null(result.IsError);
         Assert.NotNull(result.StructuredContent);
 
-        // camelCase like the REST API, computed property included.
+        // camelCase like the REST API, computed property included. An object
+        // value is emitted as-is — no wrapper needed.
         var structured = result.StructuredContent.Value;
         Assert.Equal("2026-06-11", structured.GetProperty("date").GetString());
         Assert.Equal(21, structured.GetProperty("temperatureC").GetInt32());
@@ -40,12 +41,54 @@ public class McpToolResultsTests
     }
 
     [Fact]
+    public void Success_NonObjectValue_WrapsStructuredContentInResult()
+    {
+        // structuredContent must be a JSON OBJECT (spec; SEP-2106 proposes
+        // relaxing this): arrays/primitives are wrapped as { "result": ... },
+        // the same wrapper the SDK bakes into OutputSchemaType schemas. The
+        // text block stays the RAW value JSON.
+        var result = McpToolResults.Success<IReadOnlyList<int>>([1, 2, 3]);
+
+        Assert.NotNull(result.StructuredContent);
+        var structured = result.StructuredContent.Value;
+        Assert.Equal(JsonValueKind.Object, structured.ValueKind);
+        Assert.Equal(3, structured.GetProperty("result").GetArrayLength());
+
+        var text = ParseTextContent(result);
+        Assert.Equal(JsonValueKind.Array, text.ValueKind);
+        Assert.Equal(3, text.GetArrayLength());
+    }
+
+    [Fact]
     public void FromServiceResponse_Success_DelegatesToSuccess()
     {
         var result = McpToolResults.FromServiceResponse(ServiceResponse<string>.Success("value"));
 
         Assert.Null(result.IsError);
-        Assert.Equal("value", result.StructuredContent?.GetString());
+        // A primitive value rides inside the object wrapper.
+        Assert.Equal("value", result.StructuredContent?.GetProperty("result").GetString());
+    }
+
+    [Fact]
+    public void FromServiceResponse_NonGeneric_Success_EmitsMinimalOkResult()
+    {
+        // The valueless twin of the non-generic HandleServiceResponse
+        // overload: command-style tools get a minimal success with no
+        // structuredContent (there is no output shape to type).
+        var result = McpToolResults.FromServiceResponse(ServiceResponse.Success());
+
+        Assert.Null(result.IsError);
+        Assert.Null(result.StructuredContent);
+        Assert.True(ParseTextContent(result).GetProperty("ok").GetBoolean());
+    }
+
+    [Fact]
+    public void FromServiceResponse_NonGeneric_Failure_SetsIsErrorWithEnvelope()
+    {
+        var result = McpToolResults.FromServiceResponse(ServiceResponse.Conflict("duplicate"));
+
+        Assert.True(result.IsError);
+        Assert.Equal("conflict", ParseTextContent(result).GetProperty("code").GetString());
     }
 
     [Fact]

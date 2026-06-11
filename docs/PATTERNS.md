@@ -56,9 +56,18 @@ services with an attacker-controlled Origin. The contract:
 4. subdomain wildcards follow host-filtering semantics (`*.example.com`
    matches subdomains, never the apex).
 
+**Scope caveat**: an `IEndpointFilter` runs only for minimal-API endpoints
+mapped onto the filtered builder — it never executes for the template's
+attribute-routed controller actions (`MapControllers` sits outside any
+group), the same minimal-API-only scoping as the `AddValidation()` note
+above. For controller endpoints, port the same checks into middleware or an
+MVC action filter instead.
+
 ```csharp
-app.MapGroup("/api/admin")
+var admin = app.MapGroup("/api/admin")
     .AddEndpointFilter(new ValidateOriginFilter(app.Configuration));
+// The filter guards endpoints mapped onto THIS group builder:
+admin.MapPost("/reindex", () => Results.Accepted());
 ```
 
 ## Idempotency-Key convention

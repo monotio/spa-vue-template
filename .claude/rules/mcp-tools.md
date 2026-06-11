@@ -17,6 +17,10 @@ globs:
 - Set ALL FIVE annotations explicitly on every `[McpServerTool]`: `Title`,
   `ReadOnly`, `Destructive`, `Idempotent`, `OpenWorld`. The spec defaults
   destructive/open-world to TRUE for unannotated tools.
+- `CallToolResult`-returning tools advertise their success shape with
+  `UseStructuredContent = true` + `OutputSchemaType` (see `WeatherTools`).
+  `structuredContent` must be a JSON OBJECT: `McpToolResults.Success` wraps
+  non-object values as `{ "result": ... }`, matching the SDK's schema wrapper.
 - Descriptions: purpose + limitations + usage guidance + exact
   parameter/return formats (enum values listed literally).
 - Nullable parameter without `= null` is REQUIRED in the generated schema

@@ -21,15 +21,18 @@ public sealed record McpToolError(
 /// <summary>
 /// Shapes every MCP tool outcome at the protocol level — the MCP twin of
 /// <c>ApiControllerBase.HandleServiceResponse</c>. Route all tool returns
-/// through <see cref="FromServiceResponse{T}"/> and new tools are correct by
-/// construction. The trap this encodes: a failure returned as a successful
+/// through <see cref="FromServiceResponse{T}"/> (or the non-generic overload
+/// for valueless responses) and new tools are correct by construction. The trap this encodes: a failure returned as a successful
 /// JSON string is INVISIBLE to the protocol — MCP runtimes branch on
 /// <c>isError</c>, and an error-shaped success sends agents into retry loops.
 /// </summary>
 public static class McpToolResults
 {
     // Same camelCase wire casing as the REST API, so a value observed through
-    // a tool call matches the one observed through the HTTP endpoint.
+    // a tool call matches the one observed through the HTTP endpoint. If you
+    // customize REST output serialization via AddJsonOptions (e.g. add a
+    // JsonStringEnumConverter), mirror it here — these options are what keeps
+    // the "one contract, two protocols" claim in docs/MCP.md true.
     private static readonly JsonSerializerOptions _serializerOptions = new(JsonSerializerDefaults.Web);
 
     /// <summary>
@@ -44,9 +47,30 @@ public static class McpToolResults
     }
 
     /// <summary>
+    /// Non-generic twin for command-style tools whose service returns a
+    /// valueless <see cref="ServiceResponse"/> (mirrors the non-generic
+    /// <c>HandleServiceResponse</c> overload): success becomes a minimal
+    /// <c>{"ok":true}</c> text block — no <c>structuredContent</c>, because
+    /// there is no tool output shape to type — and failures route through
+    /// <see cref="Error"/>.
+    /// </summary>
+    public static CallToolResult FromServiceResponse(ServiceResponse response)
+    {
+        ArgumentNullException.ThrowIfNull(response);
+        return response.IsSuccess
+            ? new CallToolResult { Content = [new TextContentBlock { Text = """{"ok":true}""" }] }
+            : Error(response);
+    }
+
+    /// <summary>
     /// Dual emission: <c>structuredContent</c> for typed consumers, and the
-    /// same JSON as text content for runtimes that only surface text blocks.
-    /// For POCO-returning tools, prefer the SDK's
+    /// raw value JSON as text content for runtimes that only surface text
+    /// blocks. The spec requires <c>structuredContent</c> to be a JSON
+    /// OBJECT (SEP-2106 proposes allowing any JSON value), so non-object
+    /// values (arrays, primitives) are wrapped as <c>{ "result": ... }</c> —
+    /// the SAME wrapper the SDK emits for its own structured content and
+    /// bakes into <c>OutputSchemaType</c>-advertised schemas, so the two stay
+    /// in lockstep. For POCO-returning tools, prefer the SDK's
     /// <c>UseStructuredContent = true</c> (it also generates an
     /// <c>outputSchema</c>); this helper is for tools that return
     /// <see cref="CallToolResult"/> because they route failures through the
@@ -55,10 +79,13 @@ public static class McpToolResults
     public static CallToolResult Success<T>(T value)
     {
         var json = JsonSerializer.SerializeToElement(value, _serializerOptions);
+        var structured = json.ValueKind is JsonValueKind.Object
+            ? json
+            : JsonSerializer.SerializeToElement(new { result = json }, _serializerOptions);
         return new CallToolResult
         {
             Content = [new TextContentBlock { Text = json.GetRawText() }],
-            StructuredContent = json,
+            StructuredContent = structured,
         };
     }
 

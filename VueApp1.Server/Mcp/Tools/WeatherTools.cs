@@ -20,19 +20,27 @@ public sealed class WeatherTools(IWeatherForecastService weatherService)
     // All five annotations set EXPLICITLY: the MCP spec defaults
     // destructiveHint and openWorldHint to TRUE, so an unannotated read-only
     // tool presents to runtimes as dangerous and unpredictable.
+    // OutputSchemaType (requires UseStructuredContent) advertises an
+    // outputSchema even though the method returns CallToolResult directly:
+    // the SDK wraps this non-object type as { "result": [...] } — the same
+    // wrapper McpToolResults.Success() applies to the value, so the emitted
+    // structuredContent always satisfies the advertised schema.
     [McpServerTool(
         Name = "get_weather_forecast",
         Title = "Get weather forecast",
         ReadOnly = true,
         Idempotent = true,
         Destructive = false,
-        OpenWorld = false)]
+        OpenWorld = false,
+        UseStructuredContent = true,
+        OutputSchemaType = typeof(List<WeatherForecast>))]
     [Description(
         "Gets the five-day weather forecast. "
         + "Limitations: sample data — temperatures are randomly generated, results are cached for up to "
         + "30 seconds, and no location can be specified. "
         + "Use when the user asks about upcoming weather in this application. "
-        + "Returns a JSON array of { date: 'YYYY-MM-DD', temperatureC: int, temperatureF: int, summary: string }.")]
+        + "Returns a JSON array of { date: 'YYYY-MM-DD', temperatureC: int, temperatureF: int, summary: string }; "
+        + "in structuredContent the array is wrapped as { result: [...] } per the declared output schema.")]
     public async Task<CallToolResult> GetWeatherForecast(CancellationToken cancellationToken)
     {
         var response = await weatherService.GetForecastsAsync(cancellationToken);

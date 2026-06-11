@@ -33,9 +33,11 @@ claude mcp add --transport http vueapp1 https://localhost:7191/mcp
 { "servers": { "vueapp1": { "type": "http", "url": "https://localhost:7191/mcp" } } }
 ```
 
-Any other Streamable-HTTP-capable client (Hermes, custom agents via an MCP
-SDK) needs only the URL. Verify with a `tools/list` round trip — you should
-see `get_weather_forecast`.
+Hermes — like any other Streamable-HTTP-capable client (custom agents via an
+MCP SDK included) — needs only the URL: add `https://localhost:7191/mcp` as a
+Streamable HTTP server in its MCP server settings; there is nothing else to
+configure. Verify with a `tools/list` round trip — you should see
+`get_weather_forecast`.
 
 ## Security posture
 
@@ -68,9 +70,17 @@ mis-read it, and spiral into retry loops.
 MCP twin of `ApiControllerBase.HandleServiceResponse`:
 
 - **Success** → the value serialized into `structuredContent` *and* mirrored
-  as a text block (some runtimes only surface text). For tools that return a
-  POCO directly (no envelope needed), prefer the SDK's
-  `UseStructuredContent = true`, which also generates an `outputSchema`.
+  as a raw-JSON text block (some runtimes only surface text). The spec
+  requires `structuredContent` to be a JSON **object** (SEP-2106 proposes
+  allowing any JSON value), so non-object values — arrays, primitives — are
+  wrapped as `{ "result": ... }`: the same wrapper the SDK emits for its own
+  structured content and bakes into advertised output schemas, so the two
+  never drift. Tools that return `CallToolResult` (because they route
+  failures through the envelope) advertise their success shape with
+  `OutputSchemaType` + `UseStructuredContent = true` on the attribute (see
+  `WeatherTools`). For tools that return a POCO directly (no envelope
+  needed), `UseStructuredContent = true` alone generates both the
+  `outputSchema` and the wrapped structured content.
 - **Failure** → `isError: true` with a JSON envelope as text content:
 
 ```json
