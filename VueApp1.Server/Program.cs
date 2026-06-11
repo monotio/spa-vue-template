@@ -327,6 +327,11 @@ static void ConfigurePipeline(WebApplication app, PerformanceTuningOptions perfo
     app.UseAuthorization();
 
     app.MapStaticAssets();
+    // Safety net for wwwroot content added AFTER publish (e.g. the Docker image
+    // copies the SPA dist in at image-assembly time): MapStaticAssets only
+    // serves files from its build-time manifest, and MapFallback skips
+    // file-like paths — without this, /assets/*.js and sw.js 404 in containers.
+    app.UseStaticFiles();
     app.MapControllers();
     app.MapHealthChecks("/health");
 
