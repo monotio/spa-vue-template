@@ -111,7 +111,18 @@ static void SetupHealthChecks(WebApplicationBuilder builder)
 
 static void SetupCompression(WebApplicationBuilder builder)
 {
-    builder.Services.AddResponseCompression(options => { options.EnableForHttps = true; });
+    builder.Services.AddResponseCompression(options =>
+    {
+        options.EnableForHttps = true;
+        // Missing from the built-in defaults; static copies are pre-compressed
+        // at publish, but dynamic/dev responses of these types benefit too.
+        options.MimeTypes =
+        [
+            .. Microsoft.AspNetCore.ResponseCompression.ResponseCompressionDefaults.MimeTypes,
+            "application/manifest+json",
+            "image/svg+xml",
+        ];
+    });
 }
 
 static void SetupOutputCache(WebApplicationBuilder builder, PerformanceTuningOptions performance)

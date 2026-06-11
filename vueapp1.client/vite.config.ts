@@ -58,6 +58,9 @@ export default defineConfig(({ command }) => ({
     VitePWA({
       // 'prompt' + ReloadPrompt.vue gives users an explicit "reload to update"
       // affordance; switch to 'autoUpdate' for silent updates.
+      // NOTE: clientsClaim is deliberately ABSENT — claiming clients evicts
+      // bfcached pages in Chrome, hurting back/forward navigation. Its absence
+      // is load-bearing; don't "fix" it.
       registerType: 'prompt',
       devOptions: { enabled: true },
       includeAssets: ['favicon.ico', 'logo.svg', 'apple-touch-icon-180x180.png'],
@@ -86,6 +89,25 @@ export default defineConfig(({ command }) => ({
         // never answer navigations to backend routes with the SPA shell.
         // Mirrors the server-side MapFallback exclusion for /api.
         navigateFallbackDenylist: [/^\/api/, /^\/health/, /^\/scalar/, /^\/openapi/],
+        runtimeCaching: [
+          {
+            // Hashed chunks NOT in the precache manifest (lazy pages excluded
+            // via globIgnores, or anything over maximumFileSizeToCacheInBytes
+            // as the app grows) self-cache on first use. Safe because /assets
+            // contains only content-hashed, immutable files.
+            // Deliberately NO rule for /api: caching API responses by default
+            // causes stale-data bugs and caches authenticated payloads — if
+            // you want offline reads, add a GET-only NetworkFirst route
+            // consciously (see docs/FRONTEND.md).
+            urlPattern: ({ url, sameOrigin }) => sameOrigin && url.pathname.startsWith('/assets/'),
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'hashed-assets',
+              expiration: { maxEntries: 200, maxAgeSeconds: 31536000 },
+              cacheableResponse: { statuses: [200] },
+            },
+          },
+        ],
       },
     }),
   ],

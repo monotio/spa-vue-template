@@ -57,6 +57,55 @@ any of this.
 - `vue/no-undef-components` needs `ignorePatterns: ['RouterLink', 'RouterView']`.
 - ESLint type-checked rules require test files to be included in a tsconfig — don't exclude `__tests__`.
 
+## Loading performance & the caching contract
+
+The template targets zero-request warm loads and minimal cold loads. The
+contract (enforced in `Program.cs` and `vite.config.ts` — keep them in sync):
+
+| Resource | Policy | Why |
+| --- | --- | --- |
+| `/assets/*`, `workbox-*.js` | `public, max-age=31536000, immutable` | Vite emits only content-hashed names there; a new build is a new URL |
+| `index.html`, `sw.js`, `manifest.webmanifest` | `no-cache` (+ ETag → 304) | deployments and SW updates must propagate on next navigation |
+| `/api/*` | server-side output cache only | client caching of API data is an app decision, not a template default |
+
+Build-time pieces that make cold loads fast:
+
+- **Vendor split** (`codeSplitting` in vite.config.ts): the ~90 KB framework
+  chunk (`vue-vendor`) survives app deploys in warm caches and the SW
+  precache; app changes re-ship only a ~6 KB chunk. One group only —
+  over-splitting hurts. Vite auto-emits `modulepreload` for it.
+- **Eager default route**: the landing page is statically imported — lazy
+  routes cost cold visitors a sequential round trip. Keep rarely-visited
+  pages lazy.
+- **Publish-time precompression**: the static-web-assets pipeline emits
+  max-quality `.br`/`.gz` with per-encoding ETags at `dotnet publish`
+  (the Docker build feeds dist in before publish for the same treatment).
+
+Service-worker caching tiers: the app shell is precached; other `/assets`
+files self-cache on first use (CacheFirst — safe, they're immutable). As the
+app grows, keep the precache app-shell-sized with `globIgnores` (the 2 MiB
+`maximumFileSizeToCacheInBytes` default also guards against accidentally
+precaching large media). **No `/api` caching by default** — if you want
+offline reads for specific GET endpoints, add a conscious rule:
+
+```ts
+// GET-only, network-first with a timeout; never cache authenticated writes.
+{
+  urlPattern: ({ url, sameOrigin, request }) =>
+    sameOrigin && request.method === 'GET' && url.pathname.startsWith('/api/weatherforecast'),
+  handler: 'NetworkFirst',
+  options: { cacheName: 'api-weather', networkTimeoutSeconds: 3 },
+}
+```
+
+Deliberate omissions (researched, rejected for a lean template): critical-CSS
+inlining (FCP is JS-gated on an empty `#app`), `preconnect` (no cross-origin
+hosts), 103 Early Hints (no Kestrel 1xx API until .NET 11), HTTP/3 by default
+(needs libmsquic + usually terminates at the proxy), SRI on same-origin
+assets (wrong threat model), Speculation Rules (excludes SPA soft
+navigations). Source maps: set `build.sourcemap: 'hidden'` if you want
+stack traces without shipping sources.
+
 ## Bundle analysis
 
 Take a `dist/` size snapshot (`du -sk dist` + the per-chunk table Vite
