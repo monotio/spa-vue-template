@@ -36,15 +36,16 @@ provisions everything.
 
 | Area | What you get |
 | --- | --- |
-| Frontend | Vue 3.5 Composition API, TypeScript 6 strict (`strictImportMetaEnv` + friends), Pinia, Vue Router 5 (scroll + focus management), ESLint 10 type-checked + Prettier, Vitest 4 with determinism pins (TZ, timeouts, storage shim) |
+| Frontend | Vue 3.5 Composition API, TypeScript 6 strict (`strictImportMetaEnv` + friends), Pinia, Vue Router 5 (scroll + focus management), VueUse, ProblemDetails-aware composables (`useFetch`, dirty guard, downloads), ESLint 10 type-checked + Prettier, Vitest 4 with determinism pins (TZ, timeouts, storage shim) |
 | PWA | vite-plugin-pwa: installable app shell, offline precache, update prompt, icon pipeline — with the service worker correctly denied from `/api` routes |
-| Backend | Controllers + `ServiceResponse<T>` service layer, RFC 9457 ProblemDetails on every error (incl. unhandled exceptions with `traceId`), OpenAPI 3.1 + Scalar docs, output caching, rate limiting, HybridCache, request timeouts, health checks |
-| Security | Security headers + CSP, exploit-probe denylist, Kestrel body/rate limits, host-header-safe link generation, npm `ignore-scripts` + allow-list, NuGet lockfiles + source mapping + central package management |
-| API contract | `docs/openapi/openapi.v1.json` is committed; CI fails on drift (`npm run openapi:sync` to update) |
+| Backend | Controllers + `ServiceResponse<T>` service layer, RFC 9457 ProblemDetails on every error (incl. unhandled exceptions with `traceId`), OpenAPI 3.1 + Scalar docs, output caching, rate limiting, HybridCache, request timeouts, options validated at boot, dormant background-queue + Idempotency-Key seams |
+| Security | Security headers + CSP, exploit-probe denylist, Kestrel body/rate limits, host-header-safe link generation, compile-banned APIs (`BannedSymbols.txt`: no wall-clock reads, no sync-over-async), npm `ignore-scripts` + allow-list, NuGet lockfiles + source mapping + central package management |
+| API contract | `docs/openapi/openapi.v1.json` **and** generated TS types (`src/contracts/api.gen.ts`) are committed; CI fails on drift (`npm run openapi:sync` to update); a transformer pack keeps documented error responses truthful (global 429, problem+json everywhere) |
+| Ops | Multi-stage Dockerfile on a chiseled (non-root, shell-less) runtime with build-time Brotli, `/health/live` + `/health/ready` probes, container smoke test in CI, config-gated OpenTelemetry |
 | CI/CD | SHA-pinned actions, CodeQL (C# + TS), OpenSSF Scorecard, dependency review, PR-title lint, build provenance attestations, tuned Dependabot (grouped minors, solo majors, cooldowns), Windows leg on main |
 | Testing | xUnit v3 (unit + WebApplicationFactory integration), coverage gates, test wrappers with disk logs + signal-safe exits, anti-flake doctrine |
-| Agentic dev | `AGENTS.md` playbook (Claude Code reads it via `CLAUDE.md`), committed `.claude/` settings/hooks/skills, opt-in [MCP server](docs/MCP.md) over the existing service layer, opt-in ast-grep guardrails, one-command setup, zero-secret boot |
-| Docs | Decision guides for [auth](docs/AUTH.md) and [database](docs/DATA.md), deep dives for [testing](docs/TESTING.md), [frontend](docs/FRONTEND.md), [API](docs/API.md), [config](docs/CONFIG.md), [patterns](docs/PATTERNS.md), [MCP](docs/MCP.md) |
+| Agentic dev | `AGENTS.md` playbook (Claude Code reads it via `CLAUDE.md`), committed `.claude/` settings/hooks/skills with a cross-runtime `.agents/` mirror, browser-verification skill, opt-in [MCP server](docs/MCP.md) over the existing service layer, opt-in ast-grep guardrails, one-command setup, zero-secret boot |
+| Docs | Decision guides for [auth](docs/AUTH.md), [database](docs/DATA.md), [background work](docs/BACKGROUND.md), [styling](docs/STYLING.md), [realtime](docs/REALTIME.md), [LLM features](docs/AI.md); deep dives for [testing](docs/TESTING.md), [frontend](docs/FRONTEND.md), [API](docs/API.md), [config](docs/CONFIG.md), [patterns](docs/PATTERNS.md), [MCP](docs/MCP.md) |
 
 ## Architecture
 
@@ -100,6 +101,14 @@ not always-on code:
   at-least-once scheduler inherits.
 - **No i18n** → add vue-i18n when needed; prebuild locale chunks at build
   time rather than fetching translation JSON at runtime.
+- **No CSS framework** → [docs/STYLING.md](docs/STYLING.md): why plain
+  scoped CSS ships, with vetted Tailwind v4 / UnoCSS / component-library
+  recipes for when you outgrow it.
+- **No realtime transport** → [docs/REALTIME.md](docs/REALTIME.md): SSE vs
+  SignalR vs WebSocket decision table; .NET 10 native SSE is the
+  zero-dependency default.
+- **No LLM plumbing** → [docs/AI.md](docs/AI.md): the prompt-discipline,
+  injection-defence, and eval rules to adopt with your first AI feature.
 - **No husky/lint-staged** → CI is the gate; the one git hook is pre-push
   branch protection. No `packageManager`/corepack (npm-only; corepack left
   Node ≥25).

@@ -41,10 +41,14 @@ instead of deleting `obj`/`bin`: `npm run build-server-shutdown`, then rebuild.
 
 Deep dives: [Testing](docs/TESTING.md), [Frontend](docs/FRONTEND.md),
 [API](docs/API.md), [Configuration](docs/CONFIG.md),
-[Patterns](docs/PATTERNS.md), [Background work](docs/BACKGROUND.md),
-[MCP server](docs/MCP.md),
+[Patterns](docs/PATTERNS.md), [MCP server](docs/MCP.md),
 [GitHub workflow](docs/GITHUB.md),
 [ast-grep guardrails](docs/AST_GREP_GUIDE.md).
+
+Decision guides (deliberately-omitted capabilities — read before adding
+one): [Auth](docs/AUTH.md), [Database](docs/DATA.md),
+[Background work](docs/BACKGROUND.md), [Styling](docs/STYLING.md),
+[Realtime](docs/REALTIME.md), [LLM features](docs/AI.md).
 
 **Capture learnings into these docs** (or this file) when you fix something
 non-obvious — committed docs are the project's memory. Do not use
@@ -152,6 +156,8 @@ Production-grade SPA template:
 9. **Scripts budget**: `scripts/` may not grow — prefer npm one-liners and
    documented patterns over new script files (current budget:
    openapi-contract, server-process, load-test, rename, run-dotnet-test, run-vitest).
+10. **Complex features start from a committed PRD** (`prds/`, convention in
+    [docs/GITHUB.md](docs/GITHUB.md)) — plans live in git, not in chat.
 
 ## Other Agent Runtimes
 
