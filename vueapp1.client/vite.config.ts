@@ -94,6 +94,21 @@ export default defineConfig(({ command }) => ({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  build: {
+    rolldownOptions: {
+      output: {
+        // Long-term-caching split: framework code changes far less often than
+        // app code, so warm browsers (and the service worker precache) keep
+        // the ~85 KB vendor chunk across app deploys and re-fetch only the
+        // few-KB app chunk. One group only — over-splitting hurts.
+        codeSplitting: {
+          groups: [
+            { name: 'vue-vendor', test: /node_modules[\\/](?:@vue|vue|vue-router|pinia)[\\/]/ },
+          ],
+        },
+      },
+    },
+  },
   test: {
     environment: 'jsdom',
     clearMocks: true,
