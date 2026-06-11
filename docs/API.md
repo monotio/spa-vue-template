@@ -42,14 +42,24 @@ mechanically, for current and future endpoints (no per-action
 `ProducesResponseType` discipline needed):
 
 - `RateLimitResponseTransformer` — the rate limiter is a `GlobalLimiter`, so
-  every operation documents a 429 with a `Retry-After` header (delta-seconds)
-  and a problem+json body. `RateLimit-*` headers are deliberately NOT
-  documented: the runtime never emits them and the IETF draft defining them
-  is still unstable — documenting them would be a new contract lie.
+  every operation documents a 429 with a `Retry-After` header (delta-seconds,
+  marked `required`: `OnRejected` sets it unconditionally, so documenting it
+  as optional would make generated clients null-check a guarantee) and a
+  problem+json body. A per-action 429 declaration wins — the transformer only
+  fills the gap the global limiter would leave undocumented. `RateLimit-*`
+  headers are deliberately NOT documented: the runtime never emits them and
+  the IETF draft defining them is still unstable — documenting them would be
+  a new contract lie.
 - `ProblemDetailsContentTypeTransformer` — ApiExplorer describes declared
-  4xx/5xx responses as plain `application/json` (and bodiless declarations as
-  no content); this pass relabels them `application/problem+json` and fills
-  in the `ProblemDetails` body the runtime actually sends.
+  4xx/5xx responses differently per declaration shape (verified empirically;
+  the test-assembly probe controller in `OpenApiDocumentContractTests` pins
+  each one): a typed `ProducesResponseType` as content-negotiated
+  `application/json` + `text/plain`/`text/json`, a bodiless declaration as no
+  content at all — EXCEPT on a `[Produces]`-annotated action, where it is an
+  EMPTY `application/json` media type (content present, no schema) whose
+  naive relabel would ship an untyped error body. This pass rewrites every
+  error response to a single `application/problem+json` entry, preserving a
+  declared schema and backfilling `ProblemDetails` when none was declared.
 - `ComputedPropertySchemaTransformer` — get-only computed properties (e.g.
   `WeatherForecast.TemperatureF`) are serialized on every response, but the
   schema exporter only marks deserialization-required members as `required`;
@@ -61,10 +71,13 @@ mechanically, for current and future endpoints (no per-action
   TypeScript clients inherit as `number | string`.
 
 The runtime side of the 429 lives in the rate limiter's `OnRejected`: it
-writes through `IProblemDetailsService` (a bare `WriteAsJsonAsync` mislabels
-the body as plain `application/json`) and derives `Retry-After` from the
-rejected lease's `MetadataName.RetryAfter` (time until the window resets),
-falling back to the configured window length.
+writes through `IProblemDetailsService.TryWriteAsync` (a bare
+`WriteAsJsonAsync` mislabels the body as plain `application/json`; the `Try`
+variant degrades to a bodiless 429 — status and `Retry-After` already set —
+when no writer satisfies an exotic `Accept` header, instead of throwing into
+the exception handler) and derives `Retry-After` from the rejected lease's
+`MetadataName.RetryAfter` (time until the window resets), falling back to
+the configured window length.
 `OpenApiDocumentContractTests` pins all of these invariants.
 
 ## Pipeline order (and why)

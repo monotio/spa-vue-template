@@ -16,7 +16,11 @@ export class ProblemError extends Error {
   readonly problem: ProblemDetails;
 
   constructor(problem: ProblemDetails, message?: string) {
-    super(message ?? problem.title ?? 'Request failed');
+    // title, then detail: RFC 9457 makes title optional and detail the
+    // human-readable explanation — a detail-only problem must not collapse
+    // into the generic fallback (normalizeProblem deliberately refuses to
+    // backfill title when a detail exists).
+    super(message ?? problem.title ?? problem.detail ?? 'Request failed');
     this.problem = problem;
   }
 }

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.DependencyInjection;
 using VueApp1.Server.IntegrationTests.Infrastructure;
 using Xunit;
 
@@ -22,12 +23,24 @@ public class OpenApiDocumentContractTests(IntegrationTestWebApplicationFactory f
     private static readonly string[] _httpMethods =
         ["get", "put", "post", "delete", "options", "head", "patch", "trace"];
 
-    private async Task<JsonDocument> GetOpenApiDocumentAsync()
+    private async Task<JsonDocument> GetOpenApiDocumentAsync(bool withProbeController = false)
     {
         // OpenAPI is Development-only by default; the Testing environment
         // opts in via the same flag the contract-sync script uses.
         using var client = factory
-            .WithWebHostBuilder(builder => builder.UseSetting("OpenApi:Enabled", "true"))
+            .WithWebHostBuilder(builder =>
+            {
+                builder.UseSetting("OpenApi:Enabled", "true");
+                if (withProbeController)
+                {
+                    // Mount ContractProbeController (test assembly only) so the
+                    // transformer paths can be pinned against declared error
+                    // responses without adding fake ones to the real surface.
+                    builder.ConfigureServices(services =>
+                        services.AddControllers()
+                            .AddApplicationPart(typeof(ContractProbeController).Assembly));
+                }
+            })
             .CreateClient();
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
@@ -68,8 +81,14 @@ public class OpenApiDocumentContractTests(IntegrationTestWebApplicationFactory f
                 $"{method.ToUpperInvariant()} {route} does not document the global 429.");
 
             Assert.True(
-                tooManyRequests.GetProperty("headers").TryGetProperty("Retry-After", out _),
+                tooManyRequests.GetProperty("headers").TryGetProperty("Retry-After", out var retryAfter),
                 $"{method.ToUpperInvariant()} {route}: 429 lacks the Retry-After header.");
+
+            // OnRejected sets Retry-After unconditionally — documenting it as
+            // optional would make generated clients null-check a guarantee.
+            Assert.True(
+                retryAfter.TryGetProperty("required", out var required) && required.GetBoolean(),
+                $"{method.ToUpperInvariant()} {route}: Retry-After must be marked required.");
 
             var schemaRef = tooManyRequests
                 .GetProperty("content")
@@ -103,6 +122,49 @@ public class OpenApiDocumentContractTests(IntegrationTestWebApplicationFactory f
                     content.TryGetProperty("application/json", out _),
                     $"{method.ToUpperInvariant()} {route}: {response.Name} claims plain application/json.");
             }
+        }
+    }
+
+    [Fact]
+    public async Task DeclaredErrorResponses_AreProblemJsonWithSchema()
+    {
+        // The committed surface declares no 4xx/5xx today, so without this
+        // probe the rewrite paths of ProblemDetailsContentTypeTransformer
+        // would be dead code under test: a schema-less rewrite (untyped error
+        // body for generated clients) could ship unnoticed. Media-type
+        // presence alone is NOT enough — assert the schema too.
+        using var document = await GetOpenApiDocumentAsync(withProbeController: true);
+        var paths = document.RootElement.GetProperty("paths");
+
+        (string Route, string StatusCode)[] cases =
+        [
+            // Typed declaration: the rewrite must preserve the declared schema.
+            ("/api/contract-probe", "404"),
+            // Bodiless declaration: ApiExplorer emits no content — backfill.
+            ("/api/contract-probe", "503"),
+            // Bodiless + [Produces]: ApiExplorer emits an EMPTY
+            // application/json media type — a naive relabel ships it untyped.
+            ("/api/contract-probe/produces", "503"),
+        ];
+
+        foreach (var (route, statusCode) in cases)
+        {
+            var responses = paths.GetProperty(route).GetProperty("get").GetProperty("responses");
+            Assert.True(
+                responses.TryGetProperty(statusCode, out var response),
+                $"{route} does not document the declared {statusCode}.");
+            var content = response.GetProperty("content");
+
+            // problem+json is the ONLY media type the runtime sends on errors;
+            // ApiExplorer's content-negotiated variants (application/json,
+            // text/plain, text/json) are all the same contract lie.
+            var mediaTypes = content.EnumerateObject().Select(property => property.Name).ToList();
+            Assert.Equal((string[])["application/problem+json"], mediaTypes);
+
+            Assert.True(
+                content.GetProperty("application/problem+json").TryGetProperty("schema", out var schema),
+                $"{route} {statusCode} has no schema — generated clients would see an untyped error body.");
+            Assert.Equal("#/components/schemas/ProblemDetails", schema.GetProperty("$ref").GetString());
         }
     }
 

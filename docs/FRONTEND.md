@@ -188,7 +188,10 @@ any of this.
 
 ## Strict TS gotchas (hard-won)
 
-- `exactOptionalPropertyTypes` is NOT compatible with Vue 3 (vuejs/core#12859) — don't enable it.
+- `exactOptionalPropertyTypes` IS enabled (both tsconfigs): optional fields
+  that code explicitly assigns `undefined` must declare `| undefined` — see
+  `ProblemDetails` in `src/utils/errors.ts`. (An old vuejs/core#12859
+  incompatibility once blocked this flag; that no longer applies.)
 - `noPropertyAccessFromIndexSignature` requires bracket access on `process.env`: `env['CI']`.
 - `strictImportMetaEnv`: every `VITE_` var must be declared in `env.d.ts` (see docs/CONFIG.md).
 - Use `globalThis.fetch` (not `global.fetch`) in tests for DOM-tsconfig compatibility.

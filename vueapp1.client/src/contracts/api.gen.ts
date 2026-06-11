@@ -29,7 +29,7 @@ export interface paths {
                 429: {
                     headers: {
                         /** @description Seconds to wait before retrying the request. */
-                        "Retry-After"?: number;
+                        "Retry-After": number;
                         [name: string]: unknown;
                     };
                     content: {
@@ -75,7 +75,7 @@ export interface paths {
                 429: {
                     headers: {
                         /** @description Seconds to wait before retrying the request. */
-                        "Retry-After"?: number;
+                        "Retry-After": number;
                         [name: string]: unknown;
                     };
                     content: {

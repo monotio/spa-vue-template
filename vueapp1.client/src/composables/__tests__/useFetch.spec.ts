@@ -218,6 +218,9 @@ describe('useFetch', () => {
 
       expect((error as ProblemError).problem.title).toBeUndefined();
       expect((error as ProblemError).problem.detail).toBe('Database connection pool exhausted');
+      // The detail must also drive Error.message — the display path renders
+      // e.message, and a generic "Request failed" would mask the actionable text.
+      expect((error as ProblemError).message).toBe('Database connection pool exhausted');
     });
 
     it('keeps validation problems mappable to form fields', async () => {

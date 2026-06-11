@@ -18,9 +18,17 @@ public sealed class RateLimitResponseTransformer : IOpenApiOperationTransformer
         OpenApiOperationTransformerContext context,
         CancellationToken cancellationToken)
     {
+        operation.Responses ??= [];
+        if (operation.Responses.ContainsKey("429"))
+        {
+            // A per-action 429 declaration (custom policy, typed body) wins —
+            // this transformer only fills the gap the global limiter would
+            // otherwise leave undocumented.
+            return;
+        }
+
         var problemSchema = await context.GetOrRegisterProblemDetailsSchemaAsync(cancellationToken);
 
-        operation.Responses ??= [];
         operation.Responses["429"] = new OpenApiResponse
         {
             Description = "Too Many Requests",
@@ -33,6 +41,9 @@ public sealed class RateLimitResponseTransformer : IOpenApiOperationTransformer
                 ["Retry-After"] = new OpenApiHeader
                 {
                     Description = "Seconds to wait before retrying the request.",
+                    // OnRejected sets the header unconditionally — optional
+                    // would make generated clients null-check a guarantee.
+                    Required = true,
                     Schema = new OpenApiSchema { Type = JsonSchemaType.Integer },
                 },
             },

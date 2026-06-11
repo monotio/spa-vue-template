@@ -216,9 +216,13 @@ static void SetupRateLimiting(WebApplicationBuilder builder, PerformanceTuningOp
             // IProblemDetailsService, not WriteAsJsonAsync: the rejection must
             // go out as application/problem+json like every other error —
             // WriteAsJsonAsync would mislabel it as plain application/json.
+            // TryWriteAsync, not WriteAsync: when no registered writer can
+            // satisfy an exotic Accept header (e.g. text/html without */*),
+            // a bodiless 429 — status and Retry-After are already set — beats
+            // an exception escaping into the exception handler.
             var problemDetailsService =
                 context.HttpContext.RequestServices.GetRequiredService<IProblemDetailsService>();
-            await problemDetailsService.WriteAsync(new ProblemDetailsContext
+            await problemDetailsService.TryWriteAsync(new ProblemDetailsContext
             {
                 HttpContext = context.HttpContext,
                 ProblemDetails =
