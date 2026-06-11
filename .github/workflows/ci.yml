@@ -34,6 +34,13 @@ jobs:
       # this format and keeps the SHAs fresh.
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
+      - name: Agent skills mirror drift check
+        # .agents/skills/ is a real-copy mirror of .claude/skills/ (the
+        # cross-runtime discovery path; symlinks would break the Windows leg).
+        # Edit the .claude copy, then run `npm run skills:sync`.
+        shell: bash
+        run: diff -r .claude/skills .agents/skills
+
       - name: Setup .NET
         uses: actions/setup-dotnet@9a946fdbd5fb07b82b2f5a4466058b876ab72bb2 # v5.3.0
         with:

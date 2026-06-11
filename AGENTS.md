@@ -149,6 +149,28 @@ Production-grade SPA template:
    documented patterns over new script files (current budget:
    openapi-contract, server-process, load-test, rename, run-dotnet-test, run-vitest).
 
+## Other Agent Runtimes
+
+The agentic layer is built to work from first clone in any runtime, not just
+Claude Code:
+
+- **This file (AGENTS.md)** is the cross-runtime entry point — Copilot,
+  Codex, and most agent CLIs read it natively.
+- **Skills** use the [agentskills.io](https://agentskills.io) SKILL.md
+  format. The source of truth is `.claude/skills/`; `.agents/skills/` is a
+  real-copy mirror for runtimes that only scan that path (e.g. Codex CLI).
+  Edit the `.claude` copy, then run `npm run skills:sync` — CI fails on
+  drift. (`.claude/agents/` subagents are Claude Code-specific; the skills
+  are the portable surface.)
+- **Browser tooling** for live verification is documented in
+  `.claude/skills/verify-in-browser/SKILL.md` (Playwright MCP, npx-based,
+  no secrets); runtimes that ship their own browser tools can use those
+  instead.
+- **Copilot coding agent** gets its environment from
+  `.github/workflows/copilot-setup-steps.yml` — see
+  [docs/GITHUB.md](docs/GITHUB.md) for the job-name contract and firewall
+  model.
+
 ## Agent Environment Notes
 
 - The repo must build and test with **zero secrets** — placeholder config
