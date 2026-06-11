@@ -1,5 +1,12 @@
 {
+  "name": "vueapp1-root",
   "private": true,
+  "workspaces": [
+    "vueapp1.client"
+  ],
+  "engines": {
+    "node": "^22.13.0 || >=24.0.0"
+  },
   "scripts": {
     "dev:client": "npm --prefix vueapp1.client run dev",
     "dev:server": "dotnet run --project VueApp1.Server --launch-profile https",
@@ -16,7 +23,7 @@
     "check": "npm --prefix vueapp1.client run check && dotnet build && npm run openapi:check && node scripts/run-dotnet-test.mjs --no-build",
     "test:backend": "node scripts/run-dotnet-test.mjs",
     "install-githooks": "git config core.hooksPath .githooks",
-    "setup": "npm run install-githooks && npm ci --prefix vueapp1.client && npm --prefix vueapp1.client run rebuild-trusted && dotnet restore --locked-mode && dotnet tool restore",
+    "setup": "npm run install-githooks && npm ci && npm --prefix vueapp1.client run rebuild-trusted && dotnet restore --locked-mode && dotnet tool restore",
     "build-server-shutdown": "dotnet build-server shutdown",
     "test:frontend": "node scripts/run-vitest.mjs",
     "check:fast": "npm --prefix vueapp1.client run check:fast && dotnet build && npm run openapi:check && node scripts/run-dotnet-test.mjs --no-build"

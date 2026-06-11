@@ -4,11 +4,12 @@
 #                      Run:    docker run -p 8080:8080 vueapp1
 
 FROM node:24-alpine AS client-build
-WORKDIR /src/vueapp1.client
-COPY vueapp1.client/package.json vueapp1.client/package-lock.json vueapp1.client/.npmrc ./
+WORKDIR /src
+COPY package.json package-lock.json .npmrc ./
+COPY vueapp1.client/package.json vueapp1.client/
 RUN npm ci
-COPY vueapp1.client/ ./
-RUN npm run build-only
+COPY vueapp1.client/ vueapp1.client/
+RUN npm run build-only -w vueapp1.client
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS server-build
 WORKDIR /src
