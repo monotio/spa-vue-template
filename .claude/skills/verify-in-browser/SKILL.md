@@ -44,10 +44,10 @@ foreground shell):
 ## Phase 2: Browser tier (preferred)
 
 Use whatever browser MCP tools the current runtime exposes — the assertions
-below are tool-agnostic. The repo's default browser tooling is Playwright
-MCP, wired through a root `.mcp.json` (npx-based, no secrets;
-`--ignore-https-errors` is required because the dev servers use the
-self-signed ASP.NET dev certificate):
+below are tool-agnostic. The recommended default is Playwright MCP, wired
+through a root `.mcp.json` (npx-based, no secrets; `--ignore-https-errors`
+is required because the dev servers use the self-signed ASP.NET dev
+certificate):
 
 ```json
 {

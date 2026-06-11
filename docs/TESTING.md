@@ -109,6 +109,6 @@ for value that only materializes once you have real UI complexity.
 For **on-demand interactive verification** (zero CI cost), use the committed
 `verify-in-browser` skill (`.claude/skills/verify-in-browser/SKILL.md`): it
 boots both dev servers, drives the SPA via browser MCP tools (Playwright MCP
-is the repo's default wiring), and asserts console/network cleanliness,
+is the documented default wiring), and asserts console/network cleanliness,
 header contracts, and SW activation — with a documented curl-only fallback
 when no browser tools are available.
