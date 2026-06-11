@@ -6,7 +6,7 @@ name: Template Cleanup
 
 on:
   push:
-    branches: [master]
+    branches: [main]
 
 permissions:
   contents: write

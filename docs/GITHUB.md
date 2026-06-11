@@ -13,12 +13,12 @@
 
 | Workflow | What it gates |
 | --- | --- |
-| `ci.yml` | the full check pipeline; Windows leg on pushes to master |
+| `ci.yml` | the full check pipeline; Windows leg on pushes to main |
 | `dependency-review.yml` | new deps with known high-severity vulns |
 | `codeql.yml` | static analysis (C# + JS/TS) |
 | `title.yml` | conventional-commit PR titles |
 | `scorecard.yml` | OpenSSF supply-chain posture (weekly) |
-| `provenance.yml` | build attestations on master (verify: `gh attestation verify <artifact> --repo <owner>/<repo>`) |
+| `provenance.yml` | build attestations on main (verify: `gh attestation verify <artifact> --repo <owner>/<repo>`) |
 | `template-cleanup.yml` | first push in generated repos only |
 
 All actions are SHA-pinned; Dependabot maintains the pins (grouped

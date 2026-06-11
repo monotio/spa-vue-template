@@ -11,7 +11,7 @@ and the affected version/commit.
 
 ## Supported versions
 
-This is a template repository: fixes land on `master` only. Projects generated
+This is a template repository: fixes land on `main` only. Projects generated
 from the template own their security posture from the moment of generation —
 re-run `npm audit` and `dotnet list package --vulnerable` regularly (the
 generated CI does this via Dependabot and dependency review).
