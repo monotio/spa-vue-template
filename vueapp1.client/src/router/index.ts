@@ -10,9 +10,11 @@ declare module 'vue-router' {
   }
 }
 
-// Falls back to the product name when no .env overrides VITE_APP_TITLE
-// (see .env.example and docs/CONFIG.md).
-const appName = import.meta.env.VITE_APP_TITLE ?? 'VueApp1';
+// Falls back to the product name when no .env overrides VITE_APP_TITLE —
+// including a blank value (`VITE_APP_TITLE=` in a copied .env), which would
+// otherwise produce titles like "Weather forecast · " and silently break the
+// WCAG 2.4.2 story below (see .env.example and docs/CONFIG.md).
+const appName = import.meta.env.VITE_APP_TITLE?.trim() || 'VueApp1';
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),

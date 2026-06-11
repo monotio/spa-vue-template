@@ -132,5 +132,9 @@ function triggerAnchorDownload(blob: Blob, filename: string): void {
   document.body.appendChild(anchor); // Firefox requires the anchor to be in the DOM
   anchor.click();
   anchor.remove();
-  URL.revokeObjectURL(url);
+  // Revoke OUTSIDE the click task: modern browsers capture the blob at
+  // navigation start, but some older Firefox/Safari releases aborted the
+  // save when the URL was revoked before the download dereferenced it.
+  // Deferring costs nothing and removes the compat question mark.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }

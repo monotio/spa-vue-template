@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ProblemError, StatusCodeError } from '@/utils/errors';
 import { parseContentDispositionFilename, useDownload } from '../useDownload';
 
@@ -47,7 +47,12 @@ describe('useDownload', () => {
     });
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('downloads a blob using the Content-Disposition filename', async () => {
+    vi.useFakeTimers();
     globalThis.fetch = vi.fn(() =>
       Promise.resolve(
         new Response(new Blob(['a;b;c']), {
@@ -62,8 +67,12 @@ describe('useDownload', () => {
 
     expect(clickedAnchor?.download).toBe('mätdata.csv');
     expect(clickedAnchor?.href).toBe('blob:vitest');
-    expect(revokeObjectURL).toHaveBeenCalledWith('blob:vitest');
     expect(document.querySelector('a[download]')).toBeNull(); // anchor cleaned up
+    // The object URL is revoked OUTSIDE the click task (browser-compat
+    // safety) — not yet at this point, then on the next timer tick.
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:vitest');
   });
 
   it('falls back to the provided filename, then to "download"', async () => {

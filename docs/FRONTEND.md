@@ -100,7 +100,10 @@ const { confirmLeave, cancelLeave } = useDirtyGuard(() => draft.value !== saved.
 ```
 
 Call it during the setup of a route-level component (the leave guard binds to
-the current route). The hard-won subtlety it encodes: the `beforeunload`
+the current route). One known limit: the replay is always a `push` of the
+stashed `fullPath` — `replace` semantics and history `state` of the blocked
+navigation are not preserved (stash more than the path if you need that
+fidelity). The hard-won subtlety it encodes: the `beforeunload`
 listener registers **only while dirty** — its mere presence makes the page
 ineligible for the back/forward cache, so an always-on listener taxes every
 back/forward navigation. Browsers ignore custom messages; `preventDefault()`
@@ -228,7 +231,9 @@ options; verify rollup-plugin-visualizer compatibility before reaching for it
   the duplicated `resolve.alias`), and vue-tsc, Vitest, and `vite build` all
   resolve correctly with it. HELD because the dev-server dependency scanner
   does not: it resolves SFC script-block imports with importer
-  `Page.vue?id=0`, which fails the tsconfig include match, so every dev boot
-  prints `(!) Failed to run dependency scan` and skips pre-bundling
-  (reproduced on rolldown-vite 8.0.16 with `@/stores/weather` imported from
-  `WeatherPage.vue`). Re-test on Vite bumps; switch when a dev boot is clean.
+  `Page.vue?id=0`, which fails the tsconfig include match, so every
+  cold-cache dev boot prints `(!) Failed to run dependency scan` and skips
+  pre-bundling — a warm `node_modules/.vite` cache boots clean, but the
+  failure returns on any cache invalidation (fresh clone, dependency bump).
+  Reproduced on rolldown-vite 8.0.16 with `@/stores/weather` imported from
+  `WeatherPage.vue`. Re-test on Vite bumps; switch when a cold boot is clean.

@@ -43,6 +43,17 @@ describe('router', () => {
     expect(document.title).toBe('TestApp');
   });
 
+  it('falls back to the product name when VITE_APP_TITLE is blank', async () => {
+    // A clone that copies .env.example and blanks the value must not end up
+    // with titles like "Weather forecast · " (WCAG 2.4.2).
+    vi.stubEnv('VITE_APP_TITLE', '');
+    const router = await loadRouter();
+
+    await router.push('/weather');
+
+    expect(document.title).toBe('Weather forecast · VueApp1');
+  });
+
   it('titles the not-found page', async () => {
     vi.stubEnv('VITE_APP_TITLE', 'TestApp');
     const router = await loadRouter();
