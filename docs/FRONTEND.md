@@ -7,7 +7,8 @@ collects the deep-dive knowledge; style rules live in [AGENTS.md](../AGENTS.md).
 
 - `src/pages/` — routed pages (lazy-loaded from `src/router/index.ts`)
 - `src/components/` — shared components (incl. `ReloadPrompt.vue` for PWA updates)
-- `src/composables/` — `useFetch` (ProblemDetails-aware), `useAbortableRequest`
+- `src/composables/` — `useFetch` (ProblemDetails-aware), `useAbortableRequest`,
+  `useDirtyGuard` (unsaved-changes guard), `useDownload` (file exports)
 - `src/services/` — typed API clients built on `useFetch`
 - `src/stores/` — Pinia composition stores
 - `src/contracts/` — wire types + runtime validators for API responses
@@ -19,6 +20,26 @@ The explicit route table in `src/router/index.ts` is the default — greppable,
 codegen-free, agent-friendly. `scrollBehavior` restores position on
 back/forward; `App.vue` moves focus to the main landmark after navigation
 (a11y — SPA navigations otherwise strand keyboard/screen-reader focus).
+
+**404s are a three-leg story** in this dual-stack template: the server's
+`MapFallbackToFile` and the service worker's `navigateFallback` both answer
+unknown URLs with the SPA shell (a 200, deliberately — see docs/API.md), so
+the client's `/:pathMatch(.*)*` catch-all route is the leg that turns that
+shell into visible feedback (`NotFoundPage.vue`). Remove any leg and typo
+URLs render a silent blank page. Runtime *errors*, by contrast, deliberately
+route to the logger seam (`main.ts` errorHandler), not to an error page: Vue
+has no first-class route-level error boundary, and a generic "something went
+wrong" page is an app-level UX decision — add one consciously by navigating
+from your error handler if your app wants it.
+
+**Per-page document titles** (WCAG 2.4.2): routes declare `meta.title` and a
+single `router.afterEach` suffixes it with the app name
+(`VITE_APP_TITLE`, falling back to the product name — both rewritten by the
+rename script). The `RouteMeta` augmentation in `src/router/index.ts` types
+the field. For titles derived from page data (entity names, unread counts),
+call VueUse's `useTitle` inside the page; for SSR or social/meta tags reach
+for [@unhead/vue](https://unhead.unjs.io/) (v3) instead — neither replaces
+the static per-route baseline here.
 
 **Typed file-based routing variant**: vue-router 5.1 absorbs unplugin-vue-router;
 if you prefer routes derived from `src/pages/` with typed names, know the
@@ -37,6 +58,74 @@ prevents race conditions on rapid re-requests. For server-state caching,
 dedup, and optimistic updates, [Pinia Colada](https://pinia-colada.esm.dev/)
 is the officially recommended layer — wire its query functions through the
 same typed fetch + ProblemDetails parser to keep error handling uniform.
+
+## VueUse
+
+`@vueuse/core` ships with the template — **check it before writing a bespoke
+composable**; lifecycle-safe wrappers for browser APIs are exactly what it
+exists for. Pointers:
+
+- `useEventListener` — auto-removes on unmount; supports reactive targets
+  (that's how `useDirtyGuard` registers `beforeunload` only while dirty).
+- `useTitle` — reactive document title for data-derived page titles.
+- `useLocalStorage` / `useStorage` — persisted reactive state without the
+  serialize/parse/SSR-guard boilerplate.
+- `watchDebounced` / `useDebounceFn` — debounced search-as-you-type; pairs
+  with `useAbortableRequest` for cancelling the superseded request.
+
+The bespoke `useFetch`/`useAbortableRequest` stay: they teach this template's
+RFC 9457 ProblemDetails contract, which VueUse's `useFetch` knows nothing
+about — don't swap them for the generic version.
+
+## Unsaved-changes guard
+
+`useDirtyGuard` blocks both navigation legs when a form has unsaved changes:
+in-app via an `onBeforeRouteLeave` guard (stash the intended destination,
+raise your confirm affordance, replay on confirm) and hard navigation via
+`beforeunload` (browser-native prompt). The dialog UI is deliberately YOURS —
+the composable only exposes the seam:
+
+```vue
+<script setup lang="ts">
+const draft = ref(initialValue);
+const saved = ref(initialValue);
+const showConfirm = ref(false);
+
+const { confirmLeave, cancelLeave } = useDirtyGuard(() => draft.value !== saved.value, {
+  onNavigationBlocked: () => (showConfirm.value = true),
+});
+// Dialog buttons: "Discard" -> { showConfirm = false; confirmLeave(); }
+//                 "Keep editing" -> { showConfirm = false; cancelLeave(); }
+</script>
+```
+
+Call it during the setup of a route-level component (the leave guard binds to
+the current route). The hard-won subtlety it encodes: the `beforeunload`
+listener registers **only while dirty** — its mere presence makes the page
+ineligible for the back/forward cache, so an always-on listener taxes every
+back/forward navigation. Browsers ignore custom messages; `preventDefault()`
+is the whole API.
+
+## File downloads
+
+For a plain same-origin GET export, skip JavaScript entirely:
+`<a href="/api/report" download>` — the browser parses Content-Disposition
+itself. Reach for `useDownload` when the export is a POST, needs auth
+headers, or should surface failures in-app: it fetches the blob, picks the
+filename from Content-Disposition (preferring RFC 5987 `filename*=UTF-8''…`,
+the only interoperable transport for non-ASCII filenames — the fiddly parsing
+is the composable's whole value), and triggers the save via a temporary
+object URL. Failed exports come back as ProblemDetails JSON, not a
+downloadable body: `download()` throws the same `ProblemError` /
+`StatusCodeError` as `useFetch`, so error handling stays uniform.
+
+```ts
+const { download, isDownloading } = useDownload();
+await download('/api/reports/export', {
+  fallbackFilename: 'report.csv',
+  init: { method: 'POST', body: JSON.stringify(filter) },
+});
+```
 
 ## PWA
 
@@ -106,6 +195,18 @@ assets (wrong threat model), Speculation Rules (excludes SPA soft
 navigations). Source maps: set `build.sourcemap: 'hidden'` if you want
 stack traces without shipping sources.
 
+## Agent observability: forwarded browser console
+
+`server.forwardConsole` (explicit in `vite.config.ts`) forwards browser
+`console.error`/`console.warn` plus uncaught exceptions and unhandled
+promise rejections to dev-server stdout — the stream a terminal-bound agent
+already reads. Vite would auto-enable it only when it detects an agent
+launched the server; the explicit config makes the behavior deterministic
+for human-started servers too. Two gotchas: the object form defaults
+`logLevels` to `[]` (silently nothing) so the levels are spelled out, and
+forwarding needs a connected browser session — it complements browser
+tooling, it doesn't replace it.
+
 ## Bundle analysis
 
 Take a `dist/` size snapshot (`du -sk dist` + the per-chunk table Vite
@@ -122,5 +223,12 @@ options; verify rollup-plugin-visualizer compatibility before reaching for it
 - **tsgo (TypeScript native)**: vue-tsc can't run on it yet
   (vuejs/language-tools#5381); revisit for an order-of-magnitude CI
   type-check speedup when language-tools ships support.
-- **VueUse**: fine to add; the bespoke composables here stay because they
-  teach the ProblemDetails contract.
+- **`resolve.tsconfigPaths`**: Vite 8's native option would make
+  tsconfig.app.json the single source of truth for the `@` alias (deleting
+  the duplicated `resolve.alias`), and vue-tsc, Vitest, and `vite build` all
+  resolve correctly with it. HELD because the dev-server dependency scanner
+  does not: it resolves SFC script-block imports with importer
+  `Page.vue?id=0`, which fails the tsconfig include match, so every dev boot
+  prints `(!) Failed to run dependency scan` and skips pre-bundling
+  (reproduced on rolldown-vite 8.0.16 with `@/stores/weather` imported from
+  `WeatherPage.vue`). Re-test on Vite bumps; switch when a dev boot is clean.
