@@ -139,8 +139,14 @@ static void SetupApi(WebApplicationBuilder builder)
     // special-cases MemoryDistributedCache as not actually distributed and
     // ignores it.) Rule of thumb: L1 expiry ~1/6 of L2.
     builder.Services.AddHybridCache();
-    // Outbound HTTP with retries/timeouts/circuit-breaker when you add a client:
-    // builder.Services.AddHttpClient("backend").AddStandardResilienceHandler();
+    // Outbound HTTP with retries/timeouts/circuit-breaker when you add a client
+    // (package: Microsoft.Extensions.Http.Resilience). WARNING: the standard
+    // handler retries unsafe methods (POST/PATCH/DELETE) by default — an
+    // auto-retried POST is a duplicate payment/webhook/email. Keep retries
+    // idempotent-only; full discipline (typed clients, User-Agent, and the
+    // SSRF-safe handler for user-supplied URLs): docs/PATTERNS.md "Outbound HTTP".
+    // builder.Services.AddHttpClient("backend")
+    //     .AddStandardResilienceHandler(o => o.Retry.DisableForUnsafeHttpMethods());
     // Run-after-the-response work (the post-signup email, cache warmup, ...):
     // BackgroundWork/ ships a fully tested bounded-channel queue + draining
     // hosted service that captures/restores ambient context (trace, culture,
