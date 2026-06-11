@@ -24,7 +24,7 @@ updates:
         update-types: ["minor", "patch"]
 
   - package-ecosystem: "npm"
-    directory: "/vueapp1.client"
+    directory: "/"
     schedule:
       interval: "weekly"
       day: "monday"

@@ -47,10 +47,10 @@ jobs:
           # .nvmrc is the single source of truth for the CI Node version.
           node-version-file: .nvmrc
           cache: npm
-          cache-dependency-path: vueapp1.client/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install frontend dependencies
-        run: npm ci --prefix vueapp1.client
+        run: npm ci
 
       - name: Rebuild trusted native packages
         # .npmrc sets ignore-scripts=true (install scripts are the dominant npm

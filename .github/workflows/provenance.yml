@@ -42,10 +42,10 @@ jobs:
           # (reading engines from package.json resolves differently than ci.yml did — drift bug).
           node-version-file: .nvmrc
           cache: npm
-          cache-dependency-path: vueapp1.client/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install frontend dependencies
-        run: npm ci --prefix vueapp1.client
+        run: npm ci
 
       - name: Rebuild trusted native packages
         # See ci.yml — counterpart to ignore-scripts=true in .npmrc.
