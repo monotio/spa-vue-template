@@ -135,7 +135,7 @@ Production-grade SPA template:
 3. **Before committing**: `npm run check` green, zero warnings. A lint rule is
    a PROXY for an intent — never reshape code just to slip past it; satisfy
    the intent or discuss the rule.
-4. **Never commit to master.** Feature branch + PR, Conventional Commit
+4. **Never commit to main.** Feature branch + PR, Conventional Commit
    messages and PR titles (CI enforces the title).
 5. **Don't re-run expensive commands when nothing changed** — read the
    existing output (disk logs, CI artifacts) instead.

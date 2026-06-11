@@ -1,7 +1,7 @@
 name: PR Title
 
 # Enforces Conventional Commits on PR titles — squash merges use the title as
-# the commit subject, so this keeps the master history machine-readable.
+# the commit subject, so this keeps the main history machine-readable.
 
 on:
   pull_request_target:
