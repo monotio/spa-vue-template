@@ -32,7 +32,7 @@ foreground shell):
    self-signed ASP.NET dev certificate):
 
    ```bash
-   curl -sk --max-time 2 https://localhost:7191/health        # until "Healthy"
+   curl -sk --max-time 2 https://localhost:7191/health/live   # until "Healthy"
    curl -sk --max-time 2 -o /dev/null -w '%{http_code}' https://localhost:57292/   # until 200
    ```
 
@@ -88,7 +88,7 @@ Drive https://localhost:57292/ and assert:
 ## Phase 3: curl tier (always run; sole tier without browser tools)
 
 ```bash
-curl -sk https://localhost:7191/health                                    # Healthy
+curl -sk https://localhost:7191/health/live                               # Healthy
 curl -skD - -o /dev/null https://localhost:57292/api/weatherforecast      # 200 via proxy
 #   → server-timing header present; verify the decimal point:
 #     grep -iE 'server-timing: .*dur=[0-9]+\.[0-9]'

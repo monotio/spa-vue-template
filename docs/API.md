@@ -51,9 +51,9 @@ The orchestrator pair, wired with the standard tag-filter idiom:
   default; the `AddDbContextCheck` seam in [docs/DATA.md](DATA.md) plugs in
   here), so a failing dependency drains traffic instead of killing the pod.
 - `/health` — readiness-filtered alias for single-path consumers (uptime
-  monitors, `scripts/load-test.mjs`). Deliberately NOT unfiltered: an
-  unfiltered catch-all probed as liveness would reintroduce the
-  restart-on-dependency-blip foot-gun.
+  monitors, platform defaults that probe a single path). Deliberately NOT
+  unfiltered: an unfiltered catch-all probed as liveness would reintroduce
+  the restart-on-dependency-blip foot-gun.
 
 The service worker's `navigateFallbackDenylist` (`/^\/health/`) already
 covers all three paths.

@@ -439,7 +439,7 @@ static void ConfigurePipeline(WebApplication app, PerformanceTuningOptions perfo
         "/health/ready",
         new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") });
     // /health stays as a readiness-filtered alias for single-path consumers
-    // (uptime monitors, scripts/load-test.mjs, platform defaults). Filtered
+    // (uptime monitors, platform defaults that probe one path). Filtered
     // on purpose: an unfiltered catch-all would feed future "ready"-tagged
     // checks to anything probing it as liveness — the restart foot-gun the
     // split exists to prevent.

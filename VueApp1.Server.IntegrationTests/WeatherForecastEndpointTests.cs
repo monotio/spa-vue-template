@@ -1,6 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using VueApp1.Server;
 using VueApp1.Server.IntegrationTests.Infrastructure;
 using Xunit;
@@ -76,14 +79,66 @@ public class WeatherForecastEndpointTests(IntegrationTestWebApplicationFactory f
     public async Task HealthAlias_ReturnsHealthy()
     {
         // /health stays mapped (readiness semantics) so existing consumers —
-        // uptime monitors, scripts/load-test.mjs, platform defaults that probe
-        // a single path — keep working after the live/ready split.
+        // uptime monitors, platform defaults that probe a single path — keep
+        // working after the live/ready split.
         using var cts = CreateRequestCts();
         var response = await _client.GetAsync("/health", cts.Token);
 
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadAsStringAsync(cts.Token);
         Assert.Equal("Healthy", body);
+    }
+
+    [Fact]
+    public async Task FailingReadyTaggedCheck_FailsReadinessButNeverLiveness()
+    {
+        // The split's actual contract: a failing "ready"-tagged check (the
+        // DbContext seam) drains traffic — readiness and the alias go 503 —
+        // but must never trip liveness, or the orchestrator would restart a
+        // healthy process on a dependency blip. With no checks registered the
+        // three probes are behaviorally identical, so only a failing tagged
+        // check pins the liveness predicate and the tag filter.
+        using var faultedFactory = factory.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.AddHealthChecks()
+                    .AddCheck("ready-dep", () => HealthCheckResult.Unhealthy(), tags: ["ready"])));
+        using var client = faultedFactory.CreateClient();
+        using var cts = CreateRequestCts();
+
+        var live = await client.GetAsync("/health/live", cts.Token);
+        Assert.Equal(HttpStatusCode.OK, live.StatusCode);
+        Assert.Equal("Healthy", await live.Content.ReadAsStringAsync(cts.Token));
+
+        var ready = await client.GetAsync("/health/ready", cts.Token);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, ready.StatusCode);
+        Assert.Equal("Unhealthy", await ready.Content.ReadAsStringAsync(cts.Token));
+
+        var alias = await client.GetAsync("/health", cts.Token);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, alias.StatusCode);
+        Assert.Equal("Unhealthy", await alias.Content.ReadAsStringAsync(cts.Token));
+    }
+
+    [Fact]
+    public async Task FailingUntaggedCheck_DoesNotAffectReadinessOrAlias()
+    {
+        // Pins the filter itself: readiness and the alias run ONLY the
+        // "ready"-tagged checks. If either were an unfiltered catch-all (the
+        // foot-gun the alias comment warns about), this unrelated failing
+        // check would flip them to 503.
+        using var faultedFactory = factory.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.AddHealthChecks()
+                    .AddCheck("untagged-dep", () => HealthCheckResult.Unhealthy())));
+        using var client = faultedFactory.CreateClient();
+        using var cts = CreateRequestCts();
+
+        var ready = await client.GetAsync("/health/ready", cts.Token);
+        Assert.Equal(HttpStatusCode.OK, ready.StatusCode);
+        Assert.Equal("Healthy", await ready.Content.ReadAsStringAsync(cts.Token));
+
+        var alias = await client.GetAsync("/health", cts.Token);
+        Assert.Equal(HttpStatusCode.OK, alias.StatusCode);
+        Assert.Equal("Healthy", await alias.Content.ReadAsStringAsync(cts.Token));
     }
 
     [Fact]
