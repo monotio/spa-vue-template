@@ -9,8 +9,16 @@ export default defineConfigWithVueTs(
     files: ['**/*.{ts,mts,tsx,vue}'],
   },
 
-  // dev-dist is the service worker vite-plugin-pwa generates in dev mode.
-  globalIgnores(['**/dist/**', '**/dist-ssr/**', '**/dev-dist/**', '**/coverage/**']),
+  // dev-dist is the service worker vite-plugin-pwa generates in dev mode;
+  // *.gen.ts files are generated artifacts (openapi:sync) — lint the
+  // generator's wiring, not its output.
+  globalIgnores([
+    '**/dist/**',
+    '**/dist-ssr/**',
+    '**/dev-dist/**',
+    '**/coverage/**',
+    '**/*.gen.ts',
+  ]),
 
   pluginVue.configs['flat/recommended'],
   vueTsConfigs.recommendedTypeChecked,

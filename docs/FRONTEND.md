@@ -11,7 +11,8 @@ collects the deep-dive knowledge; style rules live in [AGENTS.md](../AGENTS.md).
   `useDirtyGuard` (unsaved-changes guard), `useDownload` (file exports)
 - `src/services/` — typed API clients built on `useFetch`
 - `src/stores/` — Pinia composition stores
-- `src/contracts/` — wire types + runtime validators for API responses
+- `src/contracts/` — wire types (generated from the OpenAPI contract) +
+  runtime validators for API responses
 - `src/utils/logger.ts` — the logging seam (`console.*` is banned in src)
 
 ## Routing
@@ -58,6 +59,51 @@ prevents race conditions on rapid re-requests. For server-state caching,
 dedup, and optimistic updates, [Pinia Colada](https://pinia-colada.esm.dev/)
 is the officially recommended layer — wire its query functions through the
 same typed fetch + ProblemDetails parser to keep error handling uniform.
+
+Error classification at this boundary is spec-aware (`createResponseError` in
+`src/utils/errors.ts`, shared by `useFetch` and `useDownload`):
+`application/problem+json` is authoritative, but a plain `application/json`
+error body must carry at least one RFC 9457 descriptive field
+(`type`/`title`/`detail`/`instance`) before it counts as ProblemDetails —
+gateway/proxy envelopes like `{status, message}` also carry a status code,
+and misclassifying them buries their message behind a generic
+"Request failed" (their `message` surfaces through `StatusCodeError`
+instead). Normalization follows the RFC: the HTTP status wins over the
+body's advisory `status` (§3.1), extension members like `traceId` are
+preserved and typed via the `ProblemDetails` index signature (§3.2), and
+`statusText` backfills `title` only when the body has neither title nor
+detail. The template's own backend always speaks problem+json — this
+hardening matters the day a load balancer, CDN error page, or third-party
+API sits in front of (or beside) it.
+
+## Generated API types
+
+`src/contracts/api.gen.ts` is generated from the committed OpenAPI contract
+by `npm run openapi:sync` ([openapi-typescript](https://openapi-ts.dev/),
+devDependency, zero runtime cost) and joins the same drift gate: `npm run
+openapi:check` — part of `npm run check` and CI — fails when it's stale.
+Change the API surface, run `openapi:sync`, and `vue-tsc` flags every stale
+frontend consumer at compile time. Conventions:
+
+- **Re-export, don't scatter**: consume schema types through a hand-named
+  contract module (`src/contracts/weather.ts` re-exports
+  `components['schemas']['WeatherForecast']`) instead of spreading
+  `components[...]` lookups through the app.
+- **Keep the runtime guards** (`assertWeatherForecastList`): generated types
+  are compile-time promises about the wire — a version-skewed server or a
+  misbehaving proxy breaks them at runtime, and the guard turns that into a
+  loud error next to its cause.
+- The file carries a do-not-edit header and is ESLint- and Prettier-ignored:
+  regenerate it, never edit or reformat it.
+- **Types only, deliberately no generated client**: `useFetch` stays the
+  single fetch boundary (lint-enforced). If your app later wants a full SDK,
+  openapi-fetch / Hey API are the upgrade path — wire them through the same
+  ProblemDetails handling.
+- openapi-typescript declares a `typescript ^5.x` peer while the template
+  runs TS 6; the root `package.json` `overrides` entry widens that edge.
+  Drop the override once upstream catches up. A Dependabot bump of
+  openapi-typescript can legitimately change the emitted output — run
+  `npm run openapi:sync` and commit the regenerated file in the same PR.
 
 ## VueUse
 
@@ -142,7 +188,10 @@ any of this.
 
 ## Strict TS gotchas (hard-won)
 
-- `exactOptionalPropertyTypes` is NOT compatible with Vue 3 (vuejs/core#12859) — don't enable it.
+- `exactOptionalPropertyTypes` IS enabled (both tsconfigs): optional fields
+  that code explicitly assigns `undefined` must declare `| undefined` — see
+  `ProblemDetails` in `src/utils/errors.ts`. (An old vuejs/core#12859
+  incompatibility once blocked this flag; that no longer applies.)
 - `noPropertyAccessFromIndexSignature` requires bracket access on `process.env`: `env['CI']`.
 - `strictImportMetaEnv`: every `VITE_` var must be declared in `env.d.ts` (see docs/CONFIG.md).
 - Use `globalThis.fetch` (not `global.fetch`) in tests for DOM-tsconfig compatibility.

@@ -105,6 +105,25 @@ describe('useDownload', () => {
     expect(clickedAnchor).toBeUndefined();
   });
 
+  it('surfaces a gateway error envelope message instead of misreading it as ProblemDetails', async () => {
+    // Mirrors useFetch's classification: `{status, message}` envelopes from
+    // gateways/proxies are NOT ProblemDetails — their message must surface.
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ status: 502, message: 'upstream connect error' }), {
+          status: 502,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+
+    const { download } = useDownload();
+    const error = await download('/api/export').catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(StatusCodeError);
+    expect((error as StatusCodeError).message).toBe('upstream connect error');
+  });
+
   it('throws StatusCodeError for a non-JSON failure', async () => {
     globalThis.fetch = vi.fn(() =>
       Promise.resolve(new Response('gateway timeout', { status: 504 })),

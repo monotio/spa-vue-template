@@ -6,9 +6,11 @@ using Microsoft.Extensions.Options;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using System.Text.Json.Serialization;
 using VueApp1.Server;
 using VueApp1.Server.ExceptionHandlers;
 using VueApp1.Server.Middleware;
+using VueApp1.Server.OpenApi;
 using VueApp1.Server.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -84,7 +86,16 @@ static void ThrowIfInvalid<TOptions>(ValidateOptionsResult validation)
 
 static void SetupApi(WebApplicationBuilder builder)
 {
-    builder.Services.AddControllers();
+    // Strict JSON numbers: the Web defaults quietly accept numbers-as-strings
+    // ("5" for an int), and the schema exporter truthfully documents that as
+    // ["integer","string"] unions — which generated TypeScript clients then
+    // inherit as `number | string`. Strict keeps runtime and contract clean
+    // (set on BOTH options objects so controllers and minimal APIs agree).
+    builder.Services.AddControllers()
+        .AddJsonOptions(options =>
+            options.JsonSerializerOptions.NumberHandling = JsonNumberHandling.Strict);
+    builder.Services.ConfigureHttpJsonOptions(options =>
+        options.SerializerOptions.NumberHandling = JsonNumberHandling.Strict);
     // Generated URLs and the OpenAPI contract use lowercase paths
     // (route matching is case-insensitive either way).
     builder.Services.AddRouting(options => options.LowercaseUrls = true);
@@ -98,6 +109,12 @@ static void SetupApi(WebApplicationBuilder builder)
                 "RFC 9457 problem details on every error; see /scalar/v1 for interactive docs.";
             return Task.CompletedTask;
         });
+        // Error-contract truth (docs/API.md "Error contract in the OpenAPI
+        // document"): document the global 429, relabel declared 4xx/5xx as
+        // problem+json, and keep computed properties required in responses.
+        options.AddSchemaTransformer<ComputedPropertySchemaTransformer>();
+        options.AddOperationTransformer<RateLimitResponseTransformer>();
+        options.AddOperationTransformer<ProblemDetailsContentTypeTransformer>();
     });
     // The handler enriches unhandled exceptions with traceId (+ details in
     // Development) before AddProblemDetails' default machinery writes them.
@@ -184,20 +201,37 @@ static void SetupRateLimiting(WebApplicationBuilder builder, PerformanceTuningOp
     builder.Services.AddRateLimiter(options =>
     {
         options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-        options.OnRejected = async (context, cancellationToken) =>
+        options.OnRejected = async (context, _) =>
         {
-            var retryAfterSeconds = performance.RateLimiting.WindowSeconds;
+            // Prefer the rejected lease's own reset time (fixed-window leases
+            // expose it as RetryAfter metadata); the configured window length
+            // is only the fallback. Hardcoding the window would overstate the
+            // wait for rejections late in the window.
+            var retryAfterSeconds = context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var reset)
+                ? Math.Max(1, (int)Math.Ceiling(reset.TotalSeconds))
+                : performance.RateLimiting.WindowSeconds;
             context.HttpContext.Response.Headers.RetryAfter =
                 retryAfterSeconds.ToString(CultureInfo.InvariantCulture);
 
-            var details = new ProblemDetails
+            // IProblemDetailsService, not WriteAsJsonAsync: the rejection must
+            // go out as application/problem+json like every other error —
+            // WriteAsJsonAsync would mislabel it as plain application/json.
+            // TryWriteAsync, not WriteAsync: when no registered writer can
+            // satisfy an exotic Accept header (e.g. text/html without */*),
+            // a bodiless 429 — status and Retry-After are already set — beats
+            // an exception escaping into the exception handler.
+            var problemDetailsService =
+                context.HttpContext.RequestServices.GetRequiredService<IProblemDetailsService>();
+            await problemDetailsService.TryWriteAsync(new ProblemDetailsContext
             {
-                Status = StatusCodes.Status429TooManyRequests,
-                Title = "Too many requests",
-                Detail = $"Rate limit exceeded. Retry after {retryAfterSeconds} seconds.",
-            };
-
-            await context.HttpContext.Response.WriteAsJsonAsync(details, cancellationToken);
+                HttpContext = context.HttpContext,
+                ProblemDetails =
+                {
+                    Status = StatusCodes.Status429TooManyRequests,
+                    Title = "Too many requests",
+                    Detail = $"Rate limit exceeded. Retry after {retryAfterSeconds} seconds.",
+                },
+            });
         };
 
         options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(httpContext =>

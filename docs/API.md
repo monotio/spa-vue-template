@@ -23,11 +23,62 @@ Every non-2xx response is `application/problem+json`:
 
 `docs/openapi/openapi.v1.json` is committed; CI regenerates the document by
 booting the real server (Testing environment) and fails on drift. After any
-API-surface change: `npm run openapi:sync` and commit the diff. The harvested
+API-surface change: `npm run openapi:sync` and commit the diff. The sync also
+regenerates the frontend's compile-time view of the contract
+(`vueapp1.client/src/contracts/api.gen.ts`, see docs/FRONTEND.md "Generated
+API types"), and `openapi:check` gates both artifacts. The harvested
 `servers` array is stripped (it embeds the ephemeral localhost port). XML doc
 comments flow into the document (`GenerateDocumentationFile`) and render in
 Scalar (`/scalar/v1`, Development). RFC 9727 catalog at
 `/.well-known/api-catalog`.
+
+## Error contract in the OpenAPI document
+
+A committed contract is only as good as its truthfulness, and ASP.NET Core
+does not document error responses on its own — without help the contract
+would show a 200-only API while the runtime answers RFC 9457 on every error.
+The transformer pack in `VueApp1.Server/OpenApi/` closes that gap
+mechanically, for current and future endpoints (no per-action
+`ProducesResponseType` discipline needed):
+
+- `RateLimitResponseTransformer` — the rate limiter is a `GlobalLimiter`, so
+  every operation documents a 429 with a `Retry-After` header (delta-seconds,
+  marked `required`: `OnRejected` sets it unconditionally, so documenting it
+  as optional would make generated clients null-check a guarantee) and a
+  problem+json body. A per-action 429 declaration wins — the transformer only
+  fills the gap the global limiter would leave undocumented. `RateLimit-*`
+  headers are deliberately NOT documented: the runtime never emits them and
+  the IETF draft defining them is still unstable — documenting them would be
+  a new contract lie.
+- `ProblemDetailsContentTypeTransformer` — ApiExplorer describes declared
+  4xx/5xx responses differently per declaration shape (verified empirically;
+  the test-assembly probe controller in `OpenApiDocumentContractTests` pins
+  each one): a typed `ProducesResponseType` as content-negotiated
+  `application/json` + `text/plain`/`text/json`, a bodiless declaration as no
+  content at all — EXCEPT on a `[Produces]`-annotated action, where it is an
+  EMPTY `application/json` media type (content present, no schema) whose
+  naive relabel would ship an untyped error body. This pass rewrites every
+  error response to a single `application/problem+json` entry, preserving a
+  declared schema and backfilling `ProblemDetails` when none was declared.
+- `ComputedPropertySchemaTransformer` — get-only computed properties (e.g.
+  `WeatherForecast.TemperatureF`) are serialized on every response, but the
+  schema exporter only marks deserialization-required members as `required`;
+  this marks them `required` + `readOnly` so generated clients don't treat
+  them as optional.
+- JSON number handling is `Strict` (Program.cs, both MVC and minimal-API
+  options): the Web default `AllowReadingFromString` makes the exporter
+  document every int as an `["integer","string"]` union — which generated
+  TypeScript clients inherit as `number | string`.
+
+The runtime side of the 429 lives in the rate limiter's `OnRejected`: it
+writes through `IProblemDetailsService.TryWriteAsync` (a bare
+`WriteAsJsonAsync` mislabels the body as plain `application/json`; the `Try`
+variant degrades to a bodiless 429 — status and `Retry-After` already set —
+when no writer satisfies an exotic `Accept` header, instead of throwing into
+the exception handler) and derives `Retry-After` from the rejected lease's
+`MetadataName.RetryAfter` (time until the window resets), falling back to
+the configured window length.
+`OpenApiDocumentContractTests` pins all of these invariants.
 
 ## Pipeline order (and why)
 
@@ -66,5 +117,9 @@ docs/PATTERNS.md).
 - xUnit v3: package `xunit.v3`, namespace `using Xunit;` unchanged.
 - OpenAPI.NET 2.0: `JsonNode` replaces `OpenApiAny`; `JsonSchemaType` is
   bitwise flags for nullable.
+- Registering a schema component from a transformer: ASP.NET Core's
+  `AddOpenApiSchemaByReference` extension is internal — use
+  `document.AddComponent<IOpenApiSchema>(id, schema)` plus
+  `new OpenApiSchemaReference(id, document)` (both public OpenAPI.NET 2.x).
 - Integration tests disable hosting startup
   (`PreventHostingStartupKey`) so SpaProxy never launches inside tests.
