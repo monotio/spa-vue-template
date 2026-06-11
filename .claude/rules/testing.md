@@ -16,6 +16,11 @@ globs:
   never `vi.waitFor`.
 - TZ is pinned to `Etc/GMT-5` (= UTC+5, POSIX inverted sign) — write
   assertions timezone-safely; don't "fix" the TZ.
+- Backend test culture is pinned to `sv-SE` (`"culture"` in both
+  `xunit.runner.json` files) — write culture-safe assertions
+  (InvariantCulture for wire formats); don't "fix" the culture. Need a
+  specific OTHER culture? Use `CultureSwitcher`
+  (`VueApp1.Server.UnitTests/Infrastructure`).
 - Composable tests: use `withSetup` (real effect scope) and
   `createMockedComposable` (cached instance) from `src/test/`.
 - Integration tests: `IntegrationTestWebApplicationFactory` only; Testing

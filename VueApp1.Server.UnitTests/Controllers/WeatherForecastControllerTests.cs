@@ -21,8 +21,8 @@ public class WeatherForecastControllerTests
         // Arrange
         var forecasts = new List<WeatherForecast>
         {
-            new(DateOnly.FromDateTime(DateTime.Now.AddDays(1)), 20, "Warm"),
-            new(DateOnly.FromDateTime(DateTime.Now.AddDays(2)), 15, "Cool"),
+            new(new DateOnly(2024, 6, 1), 20, "Warm"),
+            new(new DateOnly(2024, 6, 2), 15, "Cool"),
         };
         _mockService.Setup(s => s.GetForecastsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(ServiceResponse<IReadOnlyList<WeatherForecast>>.Success(forecasts));
