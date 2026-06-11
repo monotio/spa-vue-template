@@ -67,13 +67,18 @@ public class WeatherForecastEndpointTests(IntegrationTestWebApplicationFactory f
         using var cts = CreateRequestCts();
         var response = await _client.GetAsync("/api/nonexistent", cts.Token);
 
+        // Wire-shape pin: unmatched /api routes must carry the full RFC 9457
+        // contract — without the dedicated /api fallback they would fall
+        // through to the SPA shell and return index.html with a 200.
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
         Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
 
         var payload = await response.Content.ReadAsStringAsync(cts.Token);
         using var document = JsonDocument.Parse(payload);
         var root = document.RootElement;
-        Assert.True(root.TryGetProperty("status", out var status));
-        Assert.Equal(404, status.GetInt32());
+        Assert.Equal(404, root.GetProperty("status").GetInt32());
+        Assert.Equal("Not Found", root.GetProperty("title").GetString());
+        // The detail names the offending path so client logs are actionable.
+        Assert.Contains("/api/nonexistent", root.GetProperty("detail").GetString(), StringComparison.Ordinal);
     }
 }
