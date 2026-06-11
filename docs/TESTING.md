@@ -114,6 +114,17 @@ files, or a minimal Playwright smoke that boots the real server via
 `scripts/server-process.mjs`. Neither ships by default — they double CI time
 for value that only materializes once you have real UI complexity.
 
+What DOES ship is the `container-smoke` job in `ci.yml` (main pushes +
+manual dispatch, never the PR fast path or the serial `npm run check`): it
+builds the Docker image, runs it, and probes the live container over HTTP.
+`WebApplicationFactory` structurally cannot cover this — the image copies
+the SPA dist into wwwroot after publish, a layout the in-process test host
+never sees. That exact gap once shipped a container whose `/assets/*.js`
+and `sw.js` 404'd as ProblemDetails while `/` looked fine (PR #33), so the
+smoke rule is: always fetch a REAL hashed `/assets/*.js` parsed from the
+served `index.html`, plus `sw.js` — never just `/`. Keep it one job with
+inline workflow steps (the `scripts/` budget is frozen).
+
 For **on-demand interactive verification** (zero CI cost), use the committed
 `verify-in-browser` skill (`.claude/skills/verify-in-browser/SKILL.md`): it
 boots both dev servers, drives the SPA via browser MCP tools (Playwright MCP

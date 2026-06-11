@@ -92,7 +92,9 @@ export default defineConfig(({ command, mode }) => ({
         navigateFallback: 'index.html',
         // The crux of hosting a PWA on a .NET backend: the service worker must
         // never answer navigations to backend routes with the SPA shell.
-        // Mirrors the server-side MapFallback exclusion for /api.
+        // Mirrors the server-side MapFallback exclusion for /api. The /health
+        // pattern is deliberately end-unanchored so it covers the probe pair
+        // (/health/live, /health/ready) as well as the bare /health alias.
         navigateFallbackDenylist: [/^\/api/, /^\/health/, /^\/scalar/, /^\/openapi/],
         runtimeCaching: [
           {

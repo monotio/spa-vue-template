@@ -18,7 +18,7 @@ already in place. This page maps where one slots in.
 | Seam | What to do |
 | --- | --- |
 | Service layer | Inject the DbContext into services; keep returning `ServiceResponse<T>` — error mapping stays unchanged. |
-| Health checks | Uncomment the `AddDbContextCheck<AppDbContext>()` line already stubbed in Program.cs's health-check setup. |
+| Health checks | Uncomment the `AddDbContextCheck<AppDbContext>(tags: ["ready"])` line already stubbed in Program.cs's health-check setup — the `"ready"` tag routes it to `/health/ready` (and the `/health` alias) so a DB blip drains traffic without failing the `/health/live` liveness probe. |
 | Server-Timing | Implement `IServerTimingMetrics` with an EF `DbCommandInterceptor` — per-request `db;dur=…` in browser DevTools ([docs/PATTERNS.md](PATTERNS.md)). |
 | OpenTelemetry | Add the EF Core instrumentation package; spans join the existing `VueApp1.*` pipeline. |
 | Config | Connection string via the standard appsettings layering ([docs/CONFIG.md](CONFIG.md)); keep the zero-secrets-boot rule — local dev should work with a default/localdb string. |

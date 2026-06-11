@@ -157,3 +157,74 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           echo "$digest"
+
+  # Runs the SHIPPED artifact: docker build + run + HTTP probes against the
+  # live container. WebApplicationFactory structurally cannot cover this —
+  # the Docker image copies the SPA dist into wwwroot AFTER publish, a layout
+  # the in-process test host never sees (PR #33: /assets/*.js and sw.js 404'd
+  # as ProblemDetails while / looked fine). Main pushes + manual dispatch
+  # only: an uncached multi-stage build costs minutes, so it stays out of the
+  # PR fast path and out of the serial `npm run check` gate.
+  container-smoke:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Build container image
+        run: docker build -t vueapp1-smoke .
+
+      - name: Start container
+        run: docker run -d --name vueapp1-smoke -p 8080:8080 vueapp1-smoke
+
+      - name: Wait for liveness
+        run: |
+          for _ in $(seq 1 30); do
+            if curl -fsS http://localhost:8080/health/live > /dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::container never became live"
+          exit 1
+
+      - name: Smoke-test the running container
+        # The #33 lesson, encoded: fetch a REAL hashed asset parsed from
+        # index.html (MapStaticAssets serves only manifest-listed files, so
+        # post-publish wwwroot content can 404 while / works) plus sw.js —
+        # never just /.
+        run: |
+          set -euo pipefail
+          base=http://localhost:8080
+
+          # SPA shell
+          curl -fsS "$base/" | grep -q '<div id="app">'
+
+          # A real fingerprinted bundle, parsed from the served shell
+          asset=$(curl -fsS "$base/" | grep -oE '/assets/[A-Za-z0-9._-]+\.js' | head -n 1)
+          test -n "$asset"
+          echo "probing real asset: $asset"
+          curl -fsS "$base$asset" > /dev/null
+
+          # PWA artifacts
+          curl -fsS "$base/sw.js" > /dev/null
+          curl -fsS "$base/manifest.webmanifest" > /dev/null
+
+          # Unmatched /api must be an RFC 9457 ProblemDetails 404,
+          # not the SPA shell with a 200
+          code=$(curl -s -D /tmp/api404.headers -o /tmp/api404.json \
+            -w '%{http_code}' "$base/api/does-not-exist")
+          test "$code" = "404"
+          grep -qi '^content-type: application/problem+json' /tmp/api404.headers
+          jq -e '.status == 404 and .title == "Not Found"' /tmp/api404.json
+
+          # Probe pair + single-path alias
+          test "$(curl -fsS "$base/health/live")" = "Healthy"
+          test "$(curl -fsS "$base/health/ready")" = "Healthy"
+          test "$(curl -fsS "$base/health")" = "Healthy"
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs vueapp1-smoke

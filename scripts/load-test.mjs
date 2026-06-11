@@ -9,7 +9,8 @@ const concurrency = Number(process.env.LOAD_TEST_CONCURRENCY ?? 200);
 const minRps = Number(process.env.LOAD_TEST_MIN_RPS ?? 0);
 const port = Number(process.env.LOAD_TEST_PORT ?? 5200);
 const targetUrl = `http://127.0.0.1:${port}/api/weatherforecast`;
-const healthUrl = `http://127.0.0.1:${port}/health`;
+// Liveness (process-up, no checks) is the right "server has booted" signal.
+const healthUrl = `http://127.0.0.1:${port}/health/live`;
 
 const server = startServer({
   port,
