@@ -107,6 +107,30 @@ the exception handler) and derives `Retry-After` from the rejected lease's
 the configured window length.
 `OpenApiDocumentContractTests` pins all of these invariants.
 
+## API versioning: when (and when not)
+
+A SPA-backing API with one first-party consumer needs **no versioning**:
+frontend and backend deploy together, and the contract gate catches drift in
+CI — that is why the template ships a single unversioned `v1` document. Add
+versioning when consumers you don't deploy arrive (mobile apps, third
+parties). When that day comes, Asp.Versioning 10 (April 2026, .NET 10) is
+the first release that composes cleanly with the built-in `AddOpenApi`
+pipeline this template uses — historically the blocker that made lean
+templates skip versioning. The shape: `AddApiVersioning()` plus its
+API-explorer integration to group actions per version, then one
+`AddOpenApi("vN", …)` document per version. Integration notes specific to
+this template:
+
+- The committed contract is already named `openapi.v1.json` — a `v2` joins
+  as a sibling file; extend the `openapi:sync`/`openapi:check` harvest to
+  loop over the document names so the drift gate covers every version.
+- The generated TS types (docs/FRONTEND.md "Generated API types") are
+  produced per document — the SPA should consume exactly one version's
+  types.
+- URL-segment versioning (`/api/v2/…`) keeps the service worker's
+  `navigateFallbackDenylist` and the Vite dev proxy working unchanged (both
+  match on the `/api` prefix).
+
 ## Pipeline order (and why)
 
 1. Security headers (every response, including errors, gets them)

@@ -9,7 +9,9 @@ Streamable HTTP** at `/mcp` (POST-only): every request is self-contained, no
 session affinity, scales horizontally.
 
 Off by default (`Mcp:Enabled: false` in `appsettings.json`) — a fresh clone
-pays zero cost until you flip the flag.
+pays zero cost until you flip the flag. (This page is about serving tools
+*to* agents; the reverse direction — your app calling models — has its own
+discipline guide: [docs/AI.md](AI.md).)
 
 ## Enabling
 
@@ -151,6 +153,27 @@ agents cannot guess your casing).
   convention in [PATTERNS.md](PATTERNS.md)).
 - **`preview: true` dry-run** on destructive tools: returns an impact summary
   without executing, giving runtimes (and humans) a confirmation step.
+
+### Idempotency preflight for write tools
+
+Agents retry on timeouts, and the MCP spec defines no idempotency semantics
+— server-side dedup is your job. The shipped `Idempotency/` services are the
+natural backing store ([PATTERNS.md](PATTERNS.md) has the cross-process
+upgrades); the parts a textbook implementation misses:
+
+- **Scope the key as `(user, tool-name, key)`, hashed.** Without the tool
+  name, a `create_x`/`update_x` pair sharing an agent-derived key collide.
+  Add the tenant to the scope the day you have one.
+- **Hash the payload too**: agents derive low-entropy keys, so same key +
+  same payload within the window replays the stored result, while same key +
+  **different** payload is a conflict — never a silent replay of the wrong
+  result.
+- **Write the conflict/in-progress error copy FOR the model**: state that
+  the intended result probably already exists, how to verify it, how to
+  retry with a new key — and explicitly that *only this call needs
+  adjusting; do not switch to other tools*. Opaque conflicts send agents
+  probing unrelated write tools with placeholder payloads, creating junk
+  entities.
 
 ### Tool budget
 

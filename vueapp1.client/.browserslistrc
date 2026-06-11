@@ -1,0 +1,7 @@
+# The template's browser-compat contract: Baseline Widely Available — the
+# same policy Vite 8's default build.target enforces at transform time.
+# Native browserslist query (4.25+); any tool that reads browserslist
+# (autoprefixer, eslint-plugin-compat, ...) inherits the policy from here.
+# Keep this file and the Vite build target in sync: docs/FRONTEND.md
+# "Browser-support policy".
+baseline widely available
