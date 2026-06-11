@@ -9,6 +9,9 @@ interface ViteTypeOptions {
 // type error at the import.meta.env access site — declare every variable you
 // introduce. See docs/CONFIG.md for the full environment-config workflow.
 interface ImportMetaEnv {
-  /** Example app variable; set in .env / .env.local (see .env.example). */
+  /**
+   * App name used as the document-title suffix (src/router/index.ts);
+   * set in .env / .env.local (see .env.example).
+   */
   readonly VITE_APP_TITLE?: string;
 }

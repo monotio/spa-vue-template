@@ -107,6 +107,8 @@ Production-grade SPA template:
 - Modern C#: primary constructors, records, collection expressions `[1, 2]`,
   file-scoped namespaces, braces on every control block.
 - **Never `DateTime.UtcNow`** — inject `TimeProvider` (registered as singleton).
+  Build-enforced: `BannedSymbols.txt` (BannedApiAnalyzers) makes wall-clock
+  reads and sync-over-async (`Task<T>.Result`, `Task.Wait`) compile errors.
 - Prefer `[LoggerMessage]` source-generated logging (see the middleware and
   exception handler for the pattern); pass `PathString`/lazy values, not
   eagerly formatted strings (CA1873).
@@ -175,6 +177,11 @@ Claude Code:
 
 - The repo must build and test with **zero secrets** — placeholder config
   boots the backend (design goal; keep it true).
+- **Runtime client errors appear in dev-server stdout**: Vite's
+  `server.forwardConsole` (explicit in vite.config.ts) forwards browser
+  `console.error`/`warn` and unhandled errors/rejections to the terminal
+  running `dev:client`/`dev:server` — read them there before reaching for
+  browser tooling (needs a connected browser session; see docs/FRONTEND.md).
 - Sandboxed runtimes (Codex-class): MSBuild/npm need network + elevated
   permissions for restore/build/test — request escalation with a one-line
   justification for any command that restores or installs.

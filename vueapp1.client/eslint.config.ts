@@ -62,8 +62,10 @@ export default defineConfigWithVueTs(
     name: 'app/no-direct-fetch',
     files: ['src/**/*.{ts,mts,tsx,vue}'],
     // ReloadPrompt fetches sw.js for update checks — infrastructure, not API data.
+    // useDownload streams blobs (useFetch is deliberately JSON-only).
     ignores: [
       'src/composables/useFetch.ts',
+      'src/composables/useDownload.ts',
       'src/components/ReloadPrompt.vue',
       'src/**/__tests__/**',
     ],

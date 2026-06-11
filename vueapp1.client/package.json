@@ -27,6 +27,7 @@
     "check:fast": "run-p lint:check format:check type-check test"
   },
   "dependencies": {
+    "@vueuse/core": "^14.3.0",
     "pinia": "^3.0.4",
     "vue": "^3.5.35",
     "vue-router": "^5.1.0",

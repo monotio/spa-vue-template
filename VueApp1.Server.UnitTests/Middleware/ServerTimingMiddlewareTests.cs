@@ -1,8 +1,8 @@
-using System.Globalization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.DependencyInjection;
 using VueApp1.Server.Middleware;
+using VueApp1.Server.UnitTests.Infrastructure;
 using Xunit;
 
 namespace VueApp1.Server.UnitTests.Middleware;
@@ -84,22 +84,18 @@ public class ServerTimingMiddlewareTests
     public async Task Duration_UsesInvariantDecimalPoint_OnCommaDecimalLocales()
     {
         // Server-Timing requires a decimal point; sv-SE formats 0.9 as "0,9".
-        var original = CultureInfo.CurrentCulture;
-        CultureInfo.CurrentCulture = new CultureInfo("sv-SE");
-        try
-        {
-            var (context, response) = CreateContext("/api/weatherforecast");
+        // The runner already pins sv-SE suite-wide (xunit.runner.json); the
+        // explicit switch keeps this regression pin self-contained if that
+        // default ever changes.
+        using var _ = new CultureSwitcher("sv-SE");
 
-            await RunPipelineAsync(context, response);
+        var (context, response) = CreateContext("/api/weatherforecast");
 
-            var header = context.Response.Headers["Server-Timing"].ToString();
-            Assert.DoesNotContain(",", header.Split(';')[1], StringComparison.Ordinal);
-            Assert.Matches(@"total;dur=\d+\.\d", header);
-        }
-        finally
-        {
-            CultureInfo.CurrentCulture = original;
-        }
+        await RunPipelineAsync(context, response);
+
+        var header = context.Response.Headers["Server-Timing"].ToString();
+        Assert.DoesNotContain(",", header.Split(';')[1], StringComparison.Ordinal);
+        Assert.Matches(@"total;dur=\d+\.\d", header);
     }
 
     [Fact]

@@ -23,6 +23,14 @@ dumps on CI so hung tests can't stall runners silently.
 - **TZ is pinned to `Etc/GMT-5`** (vitest.global-setup.ts) — deliberately
   non-UTC so timezone bugs surface in tests. POSIX sign inversion:
   `Etc/GMT-5` means **UTC+5**.
+- **Backend test culture is pinned to `sv-SE`** (`"culture"` in both
+  `xunit.runner.json` files) — the culture sibling of the TZ pin: a
+  deliberately hostile non-invariant culture (decimal comma, different date
+  order) so culture-formatting bugs surface in `npm run check` instead of on
+  the first non-English server. Don't "fix" the culture — write culture-safe
+  code (`InvariantCulture` for wire formats). A test that needs a specific
+  OTHER culture uses the disposable `CultureSwitcher` helper
+  (`VueApp1.Server.UnitTests/Infrastructure`).
 - **Timeouts are CI-aware** (vite.config.ts): CI runners are typically 3–5x
   slower than dev machines, so CI gets 15s while local runs fail fast at 5s.
   Never widen a *per-test* timeout to fix a flake — fix the
