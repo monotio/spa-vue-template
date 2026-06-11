@@ -55,6 +55,10 @@ async function run() {
   // The servers array embeds the ephemeral localhost origin the document was
   // harvested from — meaningless in a committed contract, so strip it.
   delete openApiDoc.servers;
+  // Normalize CRLF inside string values: the compiler writes XML doc files
+  // with Environment.NewLine, so multi-line /// summaries flow \r\n into
+  // OpenAPI descriptions on Windows and the contract would diff per-OS.
+  normalizeStringNewlines(openApiDoc);
   const normalized = `${JSON.stringify(openApiDoc, null, 2)}\n`;
   const generatedTypes = await generateTypes(openApiDoc);
 
@@ -70,6 +74,26 @@ async function run() {
   }
 
   return process.exitCode ?? 0;
+}
+
+function normalizeStringNewlines(node) {
+  if (Array.isArray(node)) {
+    for (let i = 0; i < node.length; i += 1) {
+      if (typeof node[i] === 'string') {
+        node[i] = node[i].replaceAll('\r\n', '\n');
+      } else {
+        normalizeStringNewlines(node[i]);
+      }
+    }
+  } else if (node !== null && typeof node === 'object') {
+    for (const key of Object.keys(node)) {
+      if (typeof node[key] === 'string') {
+        node[key] = node[key].replaceAll('\r\n', '\n');
+      } else {
+        normalizeStringNewlines(node[key]);
+      }
+    }
+  }
 }
 
 async function checkArtifact(filePath, expected, label) {
@@ -92,6 +116,19 @@ async function checkArtifact(filePath, expected, label) {
   if (current !== expected) {
     console.error(`Drift detected in the ${label}.`);
     console.error(`Run "npm run openapi:sync" to update ${filePath}.`);
+    // Show the first differing lines (escaped, so invisible characters like
+    // \r are diagnosable straight from CI output) instead of a bare verdict.
+    const currentLines = current.split('\n');
+    const expectedLines = expected.split('\n');
+    let shown = 0;
+    for (let i = 0; i < Math.max(currentLines.length, expectedLines.length) && shown < 5; i += 1) {
+      if (currentLines[i] !== expectedLines[i]) {
+        console.error(`  line ${i + 1}:`);
+        console.error(`    committed: ${JSON.stringify(currentLines[i] ?? '<missing>')}`);
+        console.error(`    generated: ${JSON.stringify(expectedLines[i] ?? '<missing>')}`);
+        shown += 1;
+      }
+    }
     process.exitCode = 1;
   } else {
     console.log(`The ${label} ${label.endsWith('types') ? 'are' : 'is'} up to date.`);

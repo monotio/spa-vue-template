@@ -147,7 +147,9 @@ jobs:
             | "failed-step: \(.key)\nlocal-repro: \($repro[.key] // "npm run check")"')
           # Steps without an id (checkout, setup-dotnet, setup-node, upload) never
           # appear in the steps context, so a failure there yields an empty digest.
-          digest="${digest:-failed-step: (un-id'd checkout/setup/upload step — see full-log below)}"
+          # NOTE: no apostrophes in the fallback text — inside "${var:-...}" bash
+          # treats a single quote as an opening quote and dies with a parse error.
+          digest="${digest:-failed-step: (step without an id: checkout/setup/upload — see full-log below)}"
           {
             echo "## CI failure digest (${{ matrix.os }})"
             echo '```'
