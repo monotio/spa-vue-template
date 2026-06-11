@@ -95,7 +95,9 @@ export default defineConfig(({ command, mode }) => ({
         // Mirrors the server-side MapFallback exclusion for /api. The /health
         // pattern is deliberately end-unanchored so it covers the probe pair
         // (/health/live, /health/ready) as well as the bare /health alias.
-        navigateFallbackDenylist: [/^\/api/, /^\/health/, /^\/scalar/, /^\/openapi/],
+        // /mcp is the opt-in MCP endpoint (docs/MCP.md) — protocol clients
+        // must reach the server, not a cached shell.
+        navigateFallbackDenylist: [/^\/api/, /^\/health/, /^\/scalar/, /^\/openapi/, /^\/mcp/],
         runtimeCaching: [
           {
             // Hashed chunks NOT in the precache manifest (lazy pages excluded

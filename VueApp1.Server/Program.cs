@@ -10,6 +10,8 @@ using OpenTelemetry.Trace;
 using System.Text.Json.Serialization;
 using VueApp1.Server;
 using VueApp1.Server.ExceptionHandlers;
+using VueApp1.Server.Mcp;
+using VueApp1.Server.Mcp.Tools;
 using VueApp1.Server.Middleware;
 using VueApp1.Server.OpenApi;
 using VueApp1.Server.Services;
@@ -43,6 +45,10 @@ if (performance.RequestTimeout.Enabled)
 if (builder.Configuration.GetValue<bool>("OpenTelemetry:Enabled"))
 {
     SetupTelemetry(builder);
+}
+if (builder.Configuration.GetValue<bool>("Mcp:Enabled"))
+{
+    SetupMcp(builder);
 }
 
 var app = builder.Build();
@@ -317,6 +323,36 @@ static void SetupTelemetry(WebApplicationBuilder builder)
         });
 }
 
+static void SetupMcp(WebApplicationBuilder builder)
+{
+    // Opt-in MCP server hosted INSIDE this API (docs/MCP.md). Stateless
+    // Streamable HTTP: every POST is self-contained — no session affinity,
+    // so it scales horizontally and matches where the MCP spec is heading.
+    // Tools live in Mcp/Tools and delegate to the SAME services the
+    // controllers use; add new tool classes with another WithTools<T>() call.
+    builder.Services.AddMcpServer(options =>
+        {
+            options.ServerInfo = new()
+            {
+                Name = "VueApp1",
+                Title = "VueApp1 MCP server",
+                Version = "1.0.0",
+            };
+            // Instructions prime every connected agent. Keep them short and
+            // contract-focused: how to read results and how to react to the
+            // error envelope (docs/MCP.md).
+            options.ServerInstructions =
+                "Tools delegate to the same service layer as the REST API. "
+                + "Successful calls return JSON in structuredContent (non-object values wrapped as "
+                + "{ result: ... }, mirrored as raw JSON text). "
+                + "Failures set isError with a JSON envelope { code, status?, type?, title?, detail? }; "
+                + "branch on the stable `code` (e.g. not_found, invalid_parameter, conflict, rate_limited) "
+                + "instead of parsing messages, and back off before retrying rate_limited.";
+        })
+        .WithHttpTransport(options => options.Stateless = true)
+        .WithTools<WeatherTools>();
+}
+
 static void ConfigureSecurityHeaders(WebApplication app)
 {
     var isDevelopment = app.Environment.IsDevelopment();
@@ -451,6 +487,48 @@ static void ConfigurePipeline(WebApplication app, PerformanceTuningOptions perfo
 
         await next();
     });
+
+    // Opt-in MCP endpoint (SetupMcp). Hardening, in the same spirit as the
+    // REST surface:
+    // - ValidateOriginFilter: AllowedHosts-derived Origin allowlist
+    //   (DNS-rebinding / CSRF defense-in-depth; non-browser MCP clients send
+    //   no Origin header and pass).
+    // - The global IP-partitioned rate limiter already covers /mcp — the
+    //   GlobalLimiter applies to every endpoint, no per-endpoint opt-in.
+    // - ExcludeFromDescription keeps /mcp out of the OpenAPI contract: it
+    //   speaks JSON-RPC, not the documented REST error contract.
+    // - NO auth by default (template-wide stance): do not expose /mcp beyond
+    //   trusted networks without adding authentication (docs/MCP.md, docs/AUTH.md).
+    if (app.Configuration.GetValue<bool>("Mcp:Enabled"))
+    {
+        app.MapMcp("/mcp")
+            .AddEndpointFilter(new ValidateOriginFilter(app.Configuration))
+            .ExcludeFromDescription();
+
+        // Stateless Streamable HTTP maps ONLY POST (no stream to resume, no
+        // server-initiated messages, no session to delete). Without this,
+        // GET/HEAD /mcp would fall through to the SPA fallback and hand
+        // index.html to a protocol client expecting an event stream — the
+        // /api philosophy applies: protocol paths answer with ProblemDetails,
+        // never the SPA shell. (Remove if you switch Stateless off — the
+        // transport then maps GET and DELETE itself.)
+        app.MapMethods("/mcp", ["GET", "HEAD", "DELETE"], async context =>
+        {
+            context.Response.StatusCode = StatusCodes.Status405MethodNotAllowed;
+            context.Response.Headers.Allow = "POST";
+            var problemDetailsService = context.RequestServices.GetRequiredService<IProblemDetailsService>();
+            await problemDetailsService.WriteAsync(new ProblemDetailsContext
+            {
+                HttpContext = context,
+                ProblemDetails =
+                {
+                    Status = StatusCodes.Status405MethodNotAllowed,
+                    Title = "Method Not Allowed",
+                    Detail = "The MCP endpoint is stateless Streamable HTTP: POST only.",
+                },
+            });
+        }).ExcludeFromDescription();
+    }
 
     app.MapStaticAssets();
     // Safety net for wwwroot content added AFTER publish (e.g. the Docker image
