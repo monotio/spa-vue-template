@@ -35,8 +35,10 @@ GenAI LLM01 remains the top risk). The mitigations are structural:
   is data to operate on, never instructions to follow. Escaping prevents
   crashes; it does not prevent injection.
 - Operator-authored content that must live inside an instruction prompt gets
-  **unpredictable framing** — e.g. a per-call random token in the delimiter
-  — so an embedded closing tag cannot break out of the frame.
+  **framing unpredictable to the content author** — e.g. an HMAC of the
+  content with a server secret in the delimiter; deterministic, so provider
+  prompt caching still hits — so an embedded closing tag cannot break out of
+  the frame.
 - **Validate output before acting on it**: parse against a schema
   (structured outputs), allowlist any field that drives behavior, and treat
   free text as untrusted display content. Model output that becomes HTML,

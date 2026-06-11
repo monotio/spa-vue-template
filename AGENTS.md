@@ -45,8 +45,8 @@ Deep dives: [Testing](docs/TESTING.md), [Frontend](docs/FRONTEND.md),
 [GitHub workflow](docs/GITHUB.md),
 [ast-grep guardrails](docs/AST_GREP_GUIDE.md).
 
-Decision guides (deliberately-omitted capabilities — read before adding
-one): [Auth](docs/AUTH.md), [Database](docs/DATA.md),
+Guides to deliberately-omitted capabilities (read before adding one):
+[Auth](docs/AUTH.md), [Database](docs/DATA.md),
 [Background work](docs/BACKGROUND.md), [Styling](docs/STYLING.md),
 [Realtime](docs/REALTIME.md), [LLM features](docs/AI.md).
 

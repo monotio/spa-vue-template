@@ -46,21 +46,30 @@ navigate a **recomposed** local path — never the raw input:
 
 ```ts
 function safeLocalPath(input: string | null, fallback = '/'): string {
-  const url = input ? URL.parse(input, window.location.origin) : null;
-  if (!url || url.origin !== window.location.origin) return fallback;
+  if (!input) return fallback;
+  let url: URL;
+  try {
+    url = new URL(input, window.location.origin);
+  } catch {
+    return fallback;
+  }
+  if (url.origin !== window.location.origin) return fallback;
   return url.pathname + url.search + url.hash; // recomposed: origin-free by construction
 }
 
 void router.push(safeLocalPath(new URLSearchParams(window.location.search).get('returnUrl')));
 ```
 
-Why this shape holds: `URL.parse` (Baseline 2024; returns `null` instead of
-throwing) resolves relative inputs against your origin, while every hostile
-form — protocol-relative, backslash, userinfo `@`, `javascript:` — resolves
-to a foreign (or `"null"`) origin and fails the comparison. Do **not**
-`decodeURIComponent` the whole input before checking: that over-rejects
-legitimate `%2F` segments and multi-byte UTF-8 — the parser already handles
-encoding correctly.
+Why this shape holds: the `URL` constructor resolves relative inputs against
+your origin, while every hostile form — protocol-relative, backslash,
+userinfo `@`, `javascript:` — resolves to a foreign (or `"null"`) origin and
+fails the comparison. Do **not** `decodeURIComponent` the whole input before
+checking: that over-rejects legitimate `%2F` segments and multi-byte UTF-8 —
+the parser already handles encoding correctly. (`URL.parse` returns `null`
+instead of throwing, but it is Baseline **Newly** Available until ~2027 —
+absent on in-policy Safari 16.4–17.x — so per the browser-support policy in
+[docs/FRONTEND.md](FRONTEND.md) the `try`/`catch` form is the one that may
+ship unguarded.)
 
 ## When you add any of these
 

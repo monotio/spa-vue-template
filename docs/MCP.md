@@ -148,9 +148,8 @@ agents cannot guess your casing).
   same parameter; on ambiguity return an `invalid_parameter` error whose
   `detail` lists the top candidates with their IDs so the agent can retry
   specifically.
-- **`idempotencyKey` parameter** on create-shaped tools: agents retry on
-  timeouts; key reuse must not duplicate (pairs with the Idempotency-Key
-  convention in [PATTERNS.md](PATTERNS.md)).
+- **`idempotencyKey` parameter** on create-shaped tools — full semantics in
+  "Idempotency preflight for write tools" below.
 - **`preview: true` dry-run** on destructive tools: returns an impact summary
   without executing, giving runtimes (and humans) a confirmation step.
 

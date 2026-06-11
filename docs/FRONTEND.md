@@ -55,10 +55,7 @@ you; file-based typing is real value if your app grows many routes.
 
 UI state worth sharing or surviving a reload (active tab, open panel, list
 filters) belongs in the query string — adopt one convention instead of
-letting each page hand-roll it. The shape: a writable computed over a query
-param that reads with a typed default, writes via `router.replace` (no
-history entry per change), and **deletes** the param at the default value so
-URLs stay clean:
+letting each page hand-roll it:
 
 ```ts
 export function useRouteQueryParam(name: string, defaultValue: string) {
@@ -79,10 +76,9 @@ export function useRouteQueryParam(name: string, defaultValue: string) {
 }
 ```
 
-`@vueuse/router`'s `useRouteQuery` is the off-the-shelf equivalent (one more
-package; verify its default-omission behavior before swapping). The globally
-mocked router composables (src/test/setup.ts) make components using this
-testable with no extra setup.
+`@vueuse/router`'s `useRouteQuery` is the off-the-shelf equivalent (verify
+its default-omission behavior before swapping); the globally mocked router
+composables (src/test/setup.ts) make this testable with no extra setup.
 
 ## Data fetching
 

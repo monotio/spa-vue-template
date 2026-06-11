@@ -90,9 +90,9 @@ discipline for when it does:
   POST is a duplicate payment, a double webhook delivery, a second email.
 
 ```csharp
-builder.Services.AddHttpClient<GeocodingClient>(client =>
+builder.Services.AddHttpClient<WeatherClient>(client =>
     {
-        client.BaseAddress = new Uri("https://geocoding.example.com/");
+        client.BaseAddress = new Uri("https://weather.example.com/");
         client.DefaultRequestHeaders.UserAgent.ParseAdd("vueapp1/1.0 (+https://your-app.example)");
     })
     // Retry GET/HEAD/... only; failed POST/PATCH/DELETE surface to the caller.
@@ -154,6 +154,18 @@ public static class SsrfSafeHandlerFactory
         IPNetwork.Parse("240.0.0.0/4"),    // reserved + broadcast
     ];
 
+    // IPv6 forms that EMBED an IPv4 target (mapped form is normalized below).
+    // Blanket-blocking NAT64 is the safe default; if your egress network is
+    // itself IPv6-only/NAT64, extract the embedded IPv4 (low 32 bits) and
+    // judge it by the IPv4 table instead.
+    private static readonly IPNetwork[] BlockedIPv6Ranges =
+    [
+        IPNetwork.Parse("::/128"),         // unspecified ("::") — reaches loopback on Linux
+        IPNetwork.Parse("::/96"),          // deprecated IPv4-compatible embedding (::10.0.0.1)
+        IPNetwork.Parse("64:ff9b::/96"),   // NAT64 well-known prefix — 64:ff9b::10.0.0.1 reaches RFC 1918 via the gateway
+        IPNetwork.Parse("64:ff9b:1::/48"), // NAT64 local-use prefixes
+    ];
+
     // Metadata hostnames that DNS may resolve to non-blocked relays.
     private static readonly string[] BlockedHosts = ["metadata.google.internal"];
 
@@ -198,8 +210,9 @@ public static class SsrfSafeHandlerFactory
 
         return address.AddressFamily == AddressFamily.InterNetworkV6
             ? IPAddress.IsLoopback(address) || address.IsIPv6LinkLocal
-                || address.IsIPv6UniqueLocal || address.IsIPv6SiteLocal
-                || address.IsIPv6Multicast
+                || address.IsIPv6UniqueLocal || address.IsIPv6Multicast
+                || address.IsIPv6SiteLocal // deprecated (RFC 3879) but still honored by legacy gear
+                || BlockedIPv6Ranges.Any(range => range.Contains(address))
             : BlockedIPv4Ranges.Any(range => range.Contains(address));
     }
 

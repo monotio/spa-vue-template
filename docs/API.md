@@ -116,9 +116,13 @@ versioning when consumers you don't deploy arrive (mobile apps, third
 parties). When that day comes, Asp.Versioning 10 (April 2026, .NET 10) is
 the first release that composes cleanly with the built-in `AddOpenApi`
 pipeline this template uses — historically the blocker that made lean
-templates skip versioning. The shape: `AddApiVersioning()` plus its
-API-explorer integration to group actions per version, then one
-`AddOpenApi("vN", …)` document per version. Integration notes specific to
+templates skip versioning. The shape (the whole point of v10 is that there
+is **no** per-version `AddOpenApi("vN", …)` call):
+`AddApiVersioning().AddApiExplorer(o => o.GroupNameFormat = "'v'VVV").AddOpenApi()`
+— that `AddOpenApi` comes from the `Asp.Versioning` namespace
+(`Asp.Versioning.OpenApi` package), not `Microsoft.AspNetCore.OpenApi` —
+then `app.MapOpenApi().WithDocumentPerVersion()`, which generates one
+document per discovered version automatically. Integration notes specific to
 this template:
 
 - The committed contract is already named `openapi.v1.json` — a `v2` joins
