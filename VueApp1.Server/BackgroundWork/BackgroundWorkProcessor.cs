@@ -47,6 +47,13 @@ public sealed partial class BackgroundWorkProcessor(
         CultureInfo.CurrentUICulture = item.UiCulture;
         try
         {
+            // parentContext: default means "fall back to Activity.Current",
+            // so clear any ambient activity that leaked into the execution
+            // context captured at host start — otherwise every item would be
+            // silently parented under that unrelated span. Safe: an
+            // AsyncLocal mutation inside this async method does not flow
+            // back to the drain loop.
+            Activity.Current = null;
             using var activity = _activitySource.StartActivity(
                 item.WorkName,
                 ActivityKind.Internal,

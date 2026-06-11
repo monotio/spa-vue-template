@@ -74,6 +74,8 @@ export interface paths {
                 /** @description Created */
                 201: {
                     headers: {
+                        /** @description Present with value "true" when this response was replayed from the idempotency store for a retried Idempotency-Key instead of re-executing the operation. */
+                        "Idempotency-Replayed"?: string;
                         [name: string]: unknown;
                     };
                     content: {

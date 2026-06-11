@@ -154,6 +154,47 @@ public sealed class BackgroundWorkProcessorTests : IDisposable
     }
 
     [Fact]
+    public async Task WorkActivity_IsRoot_EvenWithAnAmbientActivityAtProcessorStart()
+    {
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "VueApp1.BackgroundWork",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        Activity? workActivity = null;
+        var done = CreateCompletionSource();
+
+        // An ambient activity in the execution context captured at host start
+        // (instrumented startup, a harness running the factory under a span)
+        // must NOT become the silent parent of every drained item — the root
+        // promise has to hold regardless of what surrounds StartAsync.
+        using var ambient = new Activity("ambient-at-start").Start();
+        await _processor.StartAsync(TestContext.Current.CancellationToken);
+
+        using var enqueueActivity = new Activity("enqueue-site").Start();
+        await _queue.EnqueueAsync("traced", "tests", (_, _) =>
+        {
+            workActivity = Activity.Current;
+            done.SetResult();
+            return Task.CompletedTask;
+        }, TestContext.Current.CancellationToken);
+        enqueueActivity.Stop();
+
+        await done.Task.WaitAsync(TestContext.Current.CancellationToken);
+        await _processor.StopAsync(TestContext.Current.CancellationToken);
+        ambient.Stop();
+
+        Assert.NotNull(workActivity);
+        Assert.Null(workActivity.ParentId);
+        Assert.NotEqual(ambient.TraceId, workActivity.TraceId);
+        // The deliberate envelope link still points at the enqueue trace.
+        var link = Assert.Single(workActivity.Links);
+        Assert.Equal(enqueueActivity.TraceId, link.Context.TraceId);
+    }
+
+    [Fact]
     public async Task BoundedQueue_AppliesBackpressure_WhenFull()
     {
         var queue = new BackgroundWorkQueue(capacity: 1);

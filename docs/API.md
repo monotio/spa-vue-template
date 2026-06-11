@@ -50,6 +50,12 @@ mechanically, for current and future endpoints (no per-action
   headers are deliberately NOT documented: the runtime never emits them and
   the IETF draft defining them is still unstable — documenting them would be
   a new contract lie.
+- `IdempotencyReplayedHeaderTransformer` — actions guarded by
+  `[ServiceFilter<IdempotencyKeyFilter>]` document the `Idempotency-Replayed`
+  header on their 2xx responses (optional: only replays carry it), keyed on
+  the filter registration so the contract follows the behavior mechanically.
+  Errors deliberately don't declare it — they are never committed (the
+  don't-poison rule), so they can never replay.
 - `ProblemDetailsContentTypeTransformer` — ApiExplorer describes declared
   4xx/5xx responses differently per declaration shape (verified empirically;
   the test-assembly probe controller in `OpenApiDocumentContractTests` pins
@@ -81,6 +87,15 @@ mechanically, for current and future endpoints (no per-action
   options): the Web default `AllowReadingFromString` makes the exporter
   document every int as an `["integer","string"]` union — which generated
   TypeScript clients inherit as `number | string`.
+- DataAnnotations on POSITIONAL record parameters never reach the schema:
+  the exporter reads validation attributes from properties, so a
+  `[StringLength]` on a primary-constructor parameter validates at runtime
+  but publishes a bare `string` (generated clients hit undocumented 400s) —
+  and MVC rejects `[property:]`-attributed positional records at runtime.
+  Body DTOs whose validation must appear in the contract use non-positional
+  records with `required`/init properties (`FeedbackRequest` is the house
+  shape); bound parameters are unaffected (the Idempotency-Key header's
+  `[StringLength]` projects fine).
 
 The runtime side of the 429 lives in the rate limiter's `OnRejected`: it
 writes through `IProblemDetailsService.TryWriteAsync` (a bare

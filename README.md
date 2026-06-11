@@ -87,7 +87,8 @@ Full command/agent guidance: [AGENTS.md](AGENTS.md).
 
 ## Deliberate non-decisions
 
-Lean by design — these are documented, not shipped:
+Lean by design — these ship as documentation (or at most a dormant seam),
+not always-on code:
 
 - **No database** → [docs/DATA.md](docs/DATA.md) maps EF Core into the
   existing seams (health checks, Server-Timing, OTel, Testcontainers).

@@ -192,6 +192,11 @@ public static class IdempotencyServiceCollectionExtensions
         // real IDistributedCache (e.g. AddStackExchangeRedisCache) upgrades
         // storage to cross-process without code changes — pair it with a
         // cross-process IIdempotencyLock (sketches in docs/PATTERNS.md).
+        // This registration does NOT change HybridCache's topology:
+        // HybridCache adopts a registered IDistributedCache as its L2, but
+        // deliberately ignores MemoryDistributedCache (verified: its backend
+        // stays null with this default). A REAL distributed cache registered
+        // later upgrades both consumers at once — by design.
         services.AddDistributedMemoryCache();
         services.AddSingleton<IIdempotencyLock, InMemoryIdempotencyLock>();
         // 24h default retention: long enough for client retry windows,

@@ -249,4 +249,48 @@ public class OpenApiDocumentContractTests(IntegrationTestWebApplicationFactory f
             .ToList();
         Assert.Contains("temperatureF", required);
     }
+
+    [Fact]
+    public async Task FeedbackRequestSchema_PublishesTheMessageLengthBounds()
+    {
+        using var document = await GetOpenApiDocumentAsync();
+
+        var message = document.RootElement
+            .GetProperty("components")
+            .GetProperty("schemas")
+            .GetProperty("FeedbackRequest")
+            .GetProperty("properties")
+            .GetProperty("message");
+
+        // The runtime rejects 1-2-char messages with a 400; the contract must
+        // say so or generated clients hit undocumented errors. Guards the
+        // non-positional-record shape of FeedbackRequest: attributes on
+        // positional-record parameters silently vanish from the schema
+        // (docs/API.md "Error contract in the OpenAPI document").
+        Assert.Equal(3, message.GetProperty("minLength").GetInt32());
+        Assert.Equal(2000, message.GetProperty("maxLength").GetInt32());
+    }
+
+    [Fact]
+    public async Task IdempotentActions_DocumentTheReplayMarkerOnSuccess()
+    {
+        using var document = await GetOpenApiDocumentAsync();
+
+        var created = document.RootElement
+            .GetProperty("paths")
+            .GetProperty("/api/feedback")
+            .GetProperty("post")
+            .GetProperty("responses")
+            .GetProperty("201");
+
+        Assert.True(
+            created.GetProperty("headers").TryGetProperty("Idempotency-Replayed", out var header),
+            "The Idempotency-Key-guarded 201 must declare the Idempotency-Replayed header.");
+
+        // Only replays carry it — marking it required would make generated
+        // clients expect it on first executions too.
+        Assert.False(
+            header.TryGetProperty("required", out var required) && required.GetBoolean(),
+            "Idempotency-Replayed must stay optional: first executions don't send it.");
+    }
 }

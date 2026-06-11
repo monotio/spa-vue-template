@@ -7,15 +7,21 @@ namespace VueApp1.Server;
 /// (FeedbackController). DataAnnotations produce the automatic 400
 /// ValidationProblemDetails; domain rules live in FeedbackService (422).
 /// </summary>
-// Parameter-targeted attributes, NOT [property:]: MVC associates validation
-// metadata for positional records with the primary-constructor parameter and
-// rejects property-attributed records at runtime. No explicit [Required]:
-// the non-nullable type already makes a missing Message a binding 400, while
-// whitespace-only input deliberately passes annotations so the domain rule
-// in FeedbackService can demonstrate the 422 path.
-public record FeedbackRequest(
+// A non-positional record on purpose: the OpenAPI schema exporter reads
+// validation attributes from PROPERTIES, so a positional record's
+// parameter-targeted [StringLength] validates at runtime but silently
+// vanishes from the contract (clients would hit undocumented 400s) — and
+// MVC rejects [property:]-attributed positional records at runtime, so
+// init properties are the only shape where the 3..2000 rule is both
+// enforced AND published (docs/API.md). No explicit [Required]: `required`
+// plus the non-nullable type already make a missing Message a binding 400,
+// while whitespace-only input deliberately passes annotations so the domain
+// rule in FeedbackService can demonstrate the 422 path.
+public record FeedbackRequest
+{
     [StringLength(2000, MinimumLength = 3)]
-    string Message);
+    public required string Message { get; init; }
+}
 
 /// <summary>
 /// Server acknowledgement. <see cref="Id"/> is minted server-side, which

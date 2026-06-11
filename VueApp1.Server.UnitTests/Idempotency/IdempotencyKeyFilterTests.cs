@@ -71,6 +71,82 @@ public class IdempotencyKeyFilterTests
     }
 
     [Fact]
+    public async Task WhitespaceKey_IsARealKey_NotAPassThrough()
+    {
+        // The endpoint's binding rule accepts " " as a present key
+        // ([StringLength] counts the space) — the filter treating it as
+        // absent would silently run the action with zero idempotency
+        // protection on retries.
+        var filter = CreateFilter();
+
+        var first = CreateContext(" ", new SamplePayload("hello"));
+        await filter.OnActionExecutionAsync(first, () =>
+            Task.FromResult(Executed(first, new CreatedResult((string?)null, new { id = "first" }))));
+
+        var second = CreateContext(" ", new SamplePayload("hello"));
+        var nextCalled = false;
+        await filter.OnActionExecutionAsync(second, () =>
+        {
+            nextCalled = true;
+            return Task.FromResult(Executed(second, new CreatedResult((string?)null, new { id = "second" })));
+        });
+
+        Assert.False(nextCalled);
+        var content = Assert.IsType<ContentResult>(second.Result);
+        Assert.Contains("first", content.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task UrlCasing_DoesNotSplitTheIdempotencyScope()
+    {
+        // Routing is case-insensitive: /api/Sample and /api/sample are the
+        // same action, so a retry that changes URL casing must replay, not
+        // re-execute under a second scope.
+        var filter = CreateFilter();
+
+        var first = CreateContext("key-1", new SamplePayload("hello"), path: "/api/Sample");
+        await filter.OnActionExecutionAsync(first, () =>
+            Task.FromResult(Executed(first, new CreatedResult((string?)null, new { id = "first" }))));
+
+        var second = CreateContext("key-1", new SamplePayload("hello"), path: "/api/sample");
+        var nextCalled = false;
+        await filter.OnActionExecutionAsync(second, () =>
+        {
+            nextCalled = true;
+            return Task.FromResult(Executed(second, new CreatedResult((string?)null, new { id = "second" })));
+        });
+
+        Assert.False(nextCalled);
+        var content = Assert.IsType<ContentResult>(second.Result);
+        Assert.Contains("first", content.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task BodilessSuccess_ReplaysAsABareStatusCode_NotMislabeledJson()
+    {
+        // A 204 has no body, so its replay must not carry a JSON
+        // content-type label invented by the cache record.
+        var filter = CreateFilter();
+
+        var first = CreateContext("key-1", new SamplePayload("hello"));
+        await filter.OnActionExecutionAsync(first, () =>
+            Task.FromResult(Executed(first, new NoContentResult())));
+
+        var second = CreateContext("key-1", new SamplePayload("hello"));
+        var nextCalled = false;
+        await filter.OnActionExecutionAsync(second, () =>
+        {
+            nextCalled = true;
+            return Task.FromResult(Executed(second, new NoContentResult()));
+        });
+
+        Assert.False(nextCalled);
+        var replay = Assert.IsType<StatusCodeResult>(second.Result);
+        Assert.Equal(StatusCodes.Status204NoContent, replay.StatusCode);
+        Assert.Equal("true", second.HttpContext.Response.Headers[IdempotencyKeyFilter.ReplayedHeaderName]);
+    }
+
+    [Fact]
     public async Task SameKey_DifferentPayload_Returns422WithStableType()
     {
         var filter = CreateFilter();
@@ -169,11 +245,12 @@ public class IdempotencyKeyFilterTests
         Assert.Null(retryContext.Result);
     }
 
-    private static ActionExecutingContext CreateContext(string? key, object payload)
+    private static ActionExecutingContext CreateContext(
+        string? key, object payload, string path = "/api/sample")
     {
         var httpContext = new DefaultHttpContext();
         httpContext.Request.Method = HttpMethods.Post;
-        httpContext.Request.Path = "/api/sample";
+        httpContext.Request.Path = path;
         if (key is not null)
         {
             httpContext.Request.Headers[IdempotencyKeyFilter.HeaderName] = key;

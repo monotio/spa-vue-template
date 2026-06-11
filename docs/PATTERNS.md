@@ -1,9 +1,10 @@
 # Documented patterns
 
-Patterns this template deliberately ships as documentation instead of code.
-A starter template earns its keep by staying lean: these become relevant when
-your app grows a particular feature, and pasting a documented pattern beats
-deleting shipped abstractions you never needed.
+Patterns this template deliberately ships as documentation instead of
+always-on code. A starter template earns its keep by staying lean: most
+entries are paste-when-needed recipes, and where correctness rules are
+code-shaped a dormant seam ships instead (`Idempotency/`, `BackgroundWork/`)
+— those sections carry the upgrade paths beyond the shipped seam.
 
 ## Minimal-API variant of the controller pattern
 
@@ -84,6 +85,9 @@ fast-path read plus a double-check under the lock. The in-memory defaults are
 
 - **Storage**: register a real `IDistributedCache` (e.g.
   `AddStackExchangeRedisCache`) — `IdempotencyService` needs no changes.
+  Note this also gives `HybridCache` a distributed L2 (it adopts any real
+  `IDistributedCache` automatically; the in-memory default is special-cased
+  and ignored) — one registration upgrades both consumers, by design.
 - **Lock**: implement `IIdempotencyLock` cross-process. Two known-good shapes:
   - *SQL advisory lock* (when you've adopted a DB — docs/DATA.md): PostgreSQL
     `SELECT pg_try_advisory_lock(hashtext(@key))` on a connection you hold

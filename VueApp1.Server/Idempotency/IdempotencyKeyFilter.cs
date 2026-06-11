@@ -26,19 +26,26 @@ public sealed class IdempotencyKeyFilter(
 
     public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
     {
+        // IsNullOrEmpty, not IsNullOrWhiteSpace: the endpoint's binding rule
+        // ([StringLength], MinimumLength 1) accepts a whitespace key as
+        // present, so the filter must treat it as a real key too — dropping
+        // it here would silently run a key-carrying request unprotected.
         var headerValue = context.HttpContext.Request.Headers[HeaderName].ToString();
-        if (string.IsNullOrWhiteSpace(headerValue))
+        if (string.IsNullOrEmpty(headerValue))
         {
             await next();
             return;
         }
 
         // Scope the key per operation: the same client key on two different
-        // endpoints must not collide. Once auth exists, scope per caller too
-        // (append the user id) — otherwise one client could replay another's
-        // stored response by guessing its key.
+        // endpoints must not collide. The path is lowercased because routing
+        // is case-insensitive — /api/Feedback and /api/feedback are one
+        // action and must be ONE idempotency scope. Once auth exists, scope
+        // per caller too (append the user id) — otherwise one client could
+        // replay another's stored response by guessing its key.
         var httpRequest = context.HttpContext.Request;
-        var key = $"idempotency:{httpRequest.Method}:{httpRequest.Path}:{headerValue}";
+        var canonicalPath = httpRequest.Path.ToString().ToLowerInvariant();
+        var key = $"idempotency:{httpRequest.Method}:{canonicalPath}:{headerValue}";
         var payloadHash = HashBodyArgument(context, jsonOptions.Value.JsonSerializerOptions);
 
         await using var reservation = await idempotencyService.BeginAsync(
@@ -49,12 +56,17 @@ public sealed class IdempotencyKeyFilter(
             case IdempotencyOutcome.CachedResponse:
                 var record = reservation.Record!;
                 context.HttpContext.Response.Headers[ReplayedHeaderName] = "true";
-                context.Result = new ContentResult
-                {
-                    Content = record.Body,
-                    ContentType = record.ContentType,
-                    StatusCode = record.StatusCode,
-                };
+                // Bodiless successes were stored without a content type —
+                // replay them as a bare status code instead of labeling an
+                // empty body with a content type it never had.
+                context.Result = record.ContentType.Length == 0
+                    ? new StatusCodeResult(record.StatusCode)
+                    : new ContentResult
+                    {
+                        Content = record.Body,
+                        ContentType = record.ContentType,
+                        StatusCode = record.StatusCode,
+                    };
                 return;
 
             case IdempotencyOutcome.PayloadConflict:
@@ -85,22 +97,25 @@ public sealed class IdempotencyKeyFilter(
             return;
         }
 
-        var (statusCode, body) = executed.Result switch
+        var (statusCode, contentType, body) = executed.Result switch
         {
             ObjectResult objectResult => (
                 objectResult.StatusCode ?? StatusCodes.Status200OK,
+                "application/json; charset=utf-8",
                 objectResult.Value is null
                     ? string.Empty
                     : JsonSerializer.Serialize(objectResult.Value, jsonOptions.Value.JsonSerializerOptions)),
-            StatusCodeResult statusCodeResult => (statusCodeResult.StatusCode, string.Empty),
+            // Bodiless success (204-style): no content type, replayed as a
+            // bare status code — a JSON label would only be a lie there.
+            StatusCodeResult statusCodeResult => (statusCodeResult.StatusCode, string.Empty, string.Empty),
             // Streaming/file results are not replayable from a cache record;
             // they pass through uncommitted rather than committing a lie.
-            _ => (0, string.Empty),
+            _ => (0, string.Empty, string.Empty),
         };
 
         if (statusCode is >= StatusCodes.Status200OK and < StatusCodes.Status300MultipleChoices)
         {
-            await reservation.CommitAsync(statusCode, "application/json; charset=utf-8", body);
+            await reservation.CommitAsync(statusCode, contentType, body);
         }
 
         // Non-2xx (binding already passed, so: domain rejection) commits
