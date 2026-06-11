@@ -7,6 +7,10 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <!-- MCP client (McpClient + HttpClientTransport): exercises /mcp at SDK
+         level so spec-revision wire changes ride on the SDK bump, not on
+         hand-rolled JSON-RPC payloads. -->
+    <PackageReference Include="ModelContextProtocol.Core" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="xunit.runner.visualstudio">

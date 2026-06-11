@@ -42,6 +42,7 @@ instead of deleting `obj`/`bin`: `npm run build-server-shutdown`, then rebuild.
 Deep dives: [Testing](docs/TESTING.md), [Frontend](docs/FRONTEND.md),
 [API](docs/API.md), [Configuration](docs/CONFIG.md),
 [Patterns](docs/PATTERNS.md), [Background work](docs/BACKGROUND.md),
+[MCP server](docs/MCP.md),
 [GitHub workflow](docs/GITHUB.md),
 [ast-grep guardrails](docs/AST_GREP_GUIDE.md).
 

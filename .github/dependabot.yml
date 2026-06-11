@@ -71,6 +71,15 @@ updates:
       - dependency-name: "Microsoft.OpenApi"
         update-types: ["version-update:semver-major"]
     groups:
+      # ModelContextProtocol bumps are protocol upgrades, not routine minors:
+      # MCP spec wire changes ride on this package (Directory.Packages.props),
+      # so they arrive as solo PRs where the mandated review — run
+      # McpEndpointTests, re-skim docs/MCP.md — actually happens instead of
+      # drowning inside a grouped bump.
+      mcp-protocol:
+        patterns: ["ModelContextProtocol*"]
+        update-types: ["minor", "patch"]
       dotnet:
         patterns: ["*"]
+        exclude-patterns: ["ModelContextProtocol*"]
         update-types: ["minor", "patch"]

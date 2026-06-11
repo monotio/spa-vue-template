@@ -41,35 +41,34 @@ minimal endpoints it is dead code, which is why the template doesn't call it.
 
 ## Origin-header validation (DNS-rebinding / CSRF defense-in-depth)
 
-Relevant the moment you add token-authenticated POST endpoints or an MCP
-surface. Browsers always send `Origin` on cross-origin requests; DNS-rebinding
-attacks reach `localhost`-bound services with an attacker-controlled Origin.
-Pattern: an endpoint filter that
+**Now shipped as code**: the opt-in MCP module brought
+`VueApp1.Server/Mcp/ValidateOriginFilter.cs` into the tree (an
+`IEndpointFilter`; semantics in [MCP.md](MCP.md), matching tests in
+`ValidateOriginFilterTests`). Reuse it beyond `/mcp` the moment you add
+token-authenticated POST endpoints — browsers always send `Origin` on
+cross-origin requests, and DNS-rebinding attacks reach `localhost`-bound
+services with an attacker-controlled Origin. The contract:
 
-1. derives its allowlist from the existing `AllowedHosts` configuration
+1. allowlist derives from the existing `AllowedHosts` configuration
    (zero per-environment upkeep; `*` disables the check),
-2. allows requests **without** an Origin header (non-browser clients),
-3. rejects requests whose Origin is present but not allowlisted (403 with a
-   ProblemDetails body),
-4. honors subdomain wildcards with the same semantics as host filtering.
+2. requests **without** an Origin header pass (non-browser clients),
+3. requests whose Origin is present but not allowlisted get a 403 with a
+   ProblemDetails body,
+4. subdomain wildcards follow host-filtering semantics (`*.example.com`
+   matches subdomains, never the apex).
+
+**Scope caveat**: an `IEndpointFilter` runs only for minimal-API endpoints
+mapped onto the filtered builder — it never executes for the template's
+attribute-routed controller actions (`MapControllers` sits outside any
+group), the same minimal-API-only scoping as the `AddValidation()` note
+above. For controller endpoints, port the same checks into middleware or an
+MVC action filter instead.
 
 ```csharp
-public sealed class ValidateOriginFilter(IConfiguration config) : IEndpointFilter
-{
-    public async ValueTask<object?> InvokeAsync(
-        EndpointFilterInvocationContext context, EndpointFilterDelegate next)
-    {
-        var origin = context.HttpContext.Request.Headers.Origin;
-        if (StringValues.IsNullOrEmpty(origin) || IsAllowed(origin!, config["AllowedHosts"]))
-        {
-            return await next(context);
-        }
-        return TypedResults.Problem(statusCode: StatusCodes.Status403Forbidden,
-            title: "Origin not allowed.");
-    }
-    // IsAllowed: '*' => true; otherwise compare origin host against the
-    // semicolon-separated AllowedHosts list, honoring leading-dot wildcards.
-}
+var admin = app.MapGroup("/api/admin")
+    .AddEndpointFilter(new ValidateOriginFilter(app.Configuration));
+// The filter guards endpoints mapped onto THIS group builder:
+admin.MapPost("/reindex", () => Results.Accepted());
 ```
 
 ## Idempotency-Key: cross-process upgrades

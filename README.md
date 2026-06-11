@@ -43,8 +43,8 @@ provisions everything.
 | API contract | `docs/openapi/openapi.v1.json` is committed; CI fails on drift (`npm run openapi:sync` to update) |
 | CI/CD | SHA-pinned actions, CodeQL (C# + TS), OpenSSF Scorecard, dependency review, PR-title lint, build provenance attestations, tuned Dependabot (grouped minors, solo majors, cooldowns), Windows leg on main |
 | Testing | xUnit v3 (unit + WebApplicationFactory integration), coverage gates, test wrappers with disk logs + signal-safe exits, anti-flake doctrine |
-| Agentic dev | `AGENTS.md` playbook (Claude Code reads it via `CLAUDE.md`), committed `.claude/` settings/hooks/skills, opt-in ast-grep guardrails, one-command setup, zero-secret boot |
-| Docs | Decision guides for [auth](docs/AUTH.md) and [database](docs/DATA.md), deep dives for [testing](docs/TESTING.md), [frontend](docs/FRONTEND.md), [API](docs/API.md), [config](docs/CONFIG.md), [patterns](docs/PATTERNS.md) |
+| Agentic dev | `AGENTS.md` playbook (Claude Code reads it via `CLAUDE.md`), committed `.claude/` settings/hooks/skills, opt-in [MCP server](docs/MCP.md) over the existing service layer, opt-in ast-grep guardrails, one-command setup, zero-secret boot |
+| Docs | Decision guides for [auth](docs/AUTH.md) and [database](docs/DATA.md), deep dives for [testing](docs/TESTING.md), [frontend](docs/FRONTEND.md), [API](docs/API.md), [config](docs/CONFIG.md), [patterns](docs/PATTERNS.md), [MCP](docs/MCP.md) |
 
 ## Architecture
 
