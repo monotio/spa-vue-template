@@ -371,32 +371,33 @@ static void ConfigurePipeline(WebApplication app, PerformanceTuningOptions perfo
     app.MapControllers();
     app.MapHealthChecks("/health");
 
-    app.MapFallback(async context =>
+    // Unmatched /api routes get an RFC 9457 404 instead of the SPA shell.
+    // Registered as a more specific fallback pattern, so it wins over the
+    // file fallback below for anything under /api.
+    app.MapFallback("/api/{**path}", async context =>
     {
-        if (context.Request.Path.StartsWithSegments("/api"))
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        var problemDetailsService = context.RequestServices.GetRequiredService<IProblemDetailsService>();
+        await problemDetailsService.WriteAsync(new ProblemDetailsContext
         {
-            context.Response.StatusCode = StatusCodes.Status404NotFound;
-            var problemDetailsService = context.RequestServices.GetRequiredService<IProblemDetailsService>();
-            await problemDetailsService.WriteAsync(new ProblemDetailsContext
+            HttpContext = context,
+            ProblemDetails =
             {
-                HttpContext = context,
-                ProblemDetails =
-                {
-                    Status = StatusCodes.Status404NotFound,
-                    Title = "Not Found",
-                    Detail = $"No API endpoint matches path '{context.Request.Path}'.",
-                },
-            });
+                Status = StatusCodes.Status404NotFound,
+                Title = "Not Found",
+                Detail = $"No API endpoint matches path '{context.Request.Path}'.",
+            },
+        });
+    });
 
-            return;
-        }
-
-        // no-cache (revalidate, not "never cache") so deployments and service-worker
-        // updates propagate promptly; fingerprinted assets served by MapStaticAssets
-        // remain immutable-cached.
-        context.Response.Headers.CacheControl = "no-cache";
-        var indexPath = Path.Combine(app.Environment.WebRootPath, "index.html");
-        await context.Response.SendFileAsync(indexPath);
+    // SPA fallback via the static-file machinery (NOT a manual SendFileAsync):
+    // this sets Content-Type (nosniff is in play), emits ETag/Last-Modified so
+    // warm navigations revalidate to 304 instead of re-downloading, and lets
+    // response compression apply. no-cache = revalidate, not "never cache",
+    // so deployments and service-worker updates propagate promptly.
+    app.MapFallbackToFile("index.html", new StaticFileOptions
+    {
+        OnPrepareResponse = ctx => ctx.Context.Response.Headers.CacheControl = "no-cache",
     });
 }
 
