@@ -1,6 +1,7 @@
 using Scalar.AspNetCore;
 using System.Globalization;
 using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using OpenTelemetry.Metrics;
@@ -147,7 +148,10 @@ static void SetupCors(WebApplicationBuilder builder)
 static void SetupHealthChecks(WebApplicationBuilder builder)
 {
     builder.Services.AddHealthChecks();
-    // When you add a database: .AddDbContextCheck<AppDbContext>();
+    // When you add a database, tag the check "ready" so it gates readiness
+    // (drain traffic while the dependency is down) without failing liveness
+    // (which would make the orchestrator restart a healthy process):
+    // .AddDbContextCheck<AppDbContext>(tags: ["ready"]);
 }
 
 static void SetupCompression(WebApplicationBuilder builder)
@@ -421,7 +425,27 @@ static void ConfigurePipeline(WebApplication app, PerformanceTuningOptions perfo
     // file-like paths — without this, /assets/*.js and sw.js 404 in containers.
     app.UseStaticFiles();
     app.MapControllers();
-    app.MapHealthChecks("/health");
+
+    // Orchestrator probe pair (Kubernetes, Azure Container Apps, ...) via the
+    // standard tag-filter idiom:
+    // - liveness runs NO checks (Predicate = _ => false): it answers only
+    //   "is the process up?", so a dependency outage can never trigger a
+    //   restart loop of an otherwise healthy process;
+    // - readiness runs the "ready"-tagged checks (none by default — the
+    //   DbContext seam in SetupHealthChecks plugs in here), so a failing
+    //   dependency drains traffic instead of killing the container.
+    app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
+    app.MapHealthChecks(
+        "/health/ready",
+        new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") });
+    // /health stays as a readiness-filtered alias for single-path consumers
+    // (uptime monitors, scripts/load-test.mjs, platform defaults). Filtered
+    // on purpose: an unfiltered catch-all would feed future "ready"-tagged
+    // checks to anything probing it as liveness — the restart foot-gun the
+    // split exists to prevent.
+    app.MapHealthChecks(
+        "/health",
+        new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") });
 
     // Unmatched /api routes get an RFC 9457 404 instead of the SPA shell.
     // Registered as a more specific fallback pattern, so it wins over the

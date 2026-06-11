@@ -6,7 +6,17 @@ Accept: application/json
 
 ###
 
-# Health check
+# Liveness probe (no checks — process-up only)
+GET {{HostAddress}}/health/live
+
+###
+
+# Readiness probe ("ready"-tagged checks; empty until a DB lands)
+GET {{HostAddress}}/health/ready
+
+###
+
+# Single-path alias (readiness semantics)
 GET {{HostAddress}}/health
 
 ###

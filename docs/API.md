@@ -37,7 +37,26 @@ Scalar (`/scalar/v1`, Development). RFC 9727 catalog at
 4. HTTPS redirect → compression → routing → Server-Timing → CORS →
    (request timeouts) → rate limiter → output cache → authorization
 5. Static assets (`MapStaticAssets`, fingerprint-cached) → controllers →
-   `/health` → SPA fallback (no-cache `index.html`; ProblemDetails 404 for `/api`)
+   health probes → SPA fallback (no-cache `index.html`; ProblemDetails 404
+   for `/api`)
+
+## Health probes
+
+The orchestrator pair, wired with the standard tag-filter idiom:
+
+- `/health/live` — liveness: runs **no** checks (`Predicate = _ => false`),
+  answers only "is the process up?". A dependency outage must never make an
+  orchestrator restart a healthy process.
+- `/health/ready` — readiness: runs the `"ready"`-tagged checks (empty by
+  default; the `AddDbContextCheck` seam in [docs/DATA.md](DATA.md) plugs in
+  here), so a failing dependency drains traffic instead of killing the pod.
+- `/health` — readiness-filtered alias for single-path consumers (uptime
+  monitors, `scripts/load-test.mjs`). Deliberately NOT unfiltered: an
+  unfiltered catch-all probed as liveness would reintroduce the
+  restart-on-dependency-blip foot-gun.
+
+The service worker's `navigateFallbackDenylist` (`/^\/health/`) already
+covers all three paths.
 
 ## Observability
 

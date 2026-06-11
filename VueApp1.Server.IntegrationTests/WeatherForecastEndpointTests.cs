@@ -51,8 +51,33 @@ public class WeatherForecastEndpointTests(IntegrationTestWebApplicationFactory f
     }
 
     [Fact]
-    public async Task HealthCheck_ReturnsHealthy()
+    public async Task LivenessProbe_ReturnsHealthy()
     {
+        using var cts = CreateRequestCts();
+        var response = await _client.GetAsync("/health/live", cts.Token);
+
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadAsStringAsync(cts.Token);
+        Assert.Equal("Healthy", body);
+    }
+
+    [Fact]
+    public async Task ReadinessProbe_ReturnsHealthy()
+    {
+        using var cts = CreateRequestCts();
+        var response = await _client.GetAsync("/health/ready", cts.Token);
+
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadAsStringAsync(cts.Token);
+        Assert.Equal("Healthy", body);
+    }
+
+    [Fact]
+    public async Task HealthAlias_ReturnsHealthy()
+    {
+        // /health stays mapped (readiness semantics) so existing consumers —
+        // uptime monitors, scripts/load-test.mjs, platform defaults that probe
+        // a single path — keep working after the live/ready split.
         using var cts = CreateRequestCts();
         var response = await _client.GetAsync("/health", cts.Token);
 

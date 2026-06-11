@@ -134,8 +134,8 @@ await download('/api/reports/export', {
 
 `vite-plugin-pwa` (generateSW) precaches the app shell;
 `navigateFallbackDenylist` keeps the service worker away from `/api`,
-`/health`, `/scalar`, `/openapi` — the crux of hosting a PWA on a .NET
-backend. `ReloadPrompt.vue` surfaces updates (hourly check + prompt).
+`/health*` (the liveness/readiness probes and the bare alias), `/scalar`,
+`/openapi` — the crux of hosting a PWA on a .NET backend. `ReloadPrompt.vue` surfaces updates (hourly check + prompt).
 Regenerate icons from `public/logo.svg`: `npm run generate-pwa-assets`.
 Verify installability with a Chrome DevTools Lighthouse audit after changing
 any of this.
