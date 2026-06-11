@@ -87,12 +87,17 @@ Full command/agent guidance: [AGENTS.md](AGENTS.md).
 
 ## Deliberate non-decisions
 
-Lean by design — these are documented, not shipped:
+Lean by design — these ship as documentation (or at most a dormant seam),
+not always-on code:
 
 - **No database** → [docs/DATA.md](docs/DATA.md) maps EF Core into the
   existing seams (health checks, Server-Timing, OTel, Testcontainers).
 - **No auth** → [docs/AUTH.md](docs/AUTH.md): cookies + Identity endpoints,
   BFF for external IdPs, .NET 10 passkeys.
+- **No job scheduler** → [docs/BACKGROUND.md](docs/BACKGROUND.md): a tested
+  in-process queue ships as a dormant seam (`BackgroundWork/`); the guide
+  covers when it suffices vs Hangfire/Quartz, and the invariants any
+  at-least-once scheduler inherits.
 - **No i18n** → add vue-i18n when needed; prebuild locale chunks at build
   time rather than fetching translation JSON at runtime.
 - **No husky/lint-staged** → CI is the gate; the one git hook is pre-push

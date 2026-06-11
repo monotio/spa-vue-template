@@ -126,11 +126,52 @@ public class OpenApiDocumentContractTests(IntegrationTestWebApplicationFactory f
     }
 
     [Fact]
+    public async Task SuccessResponsesAndRequestBodies_DeclareOnlyCanonicalJson()
+    {
+        using var document = await GetOpenApiDocumentAsync();
+
+        foreach (var (route, method, operation) in EnumerateOperations(document.RootElement))
+        {
+            // Without a class-level [Produces] (deliberately absent — it
+            // would relabel problem+json error bodies on the wire; see
+            // ApiControllerBase), ApiExplorer emits content-negotiation noise
+            // (text/plain + alias entries). CanonicalJsonContentTransformer
+            // collapses it; this pin keeps future endpoints noise-free.
+            if (operation.TryGetProperty("requestBody", out var requestBody))
+            {
+                var requestMediaTypes = requestBody.GetProperty("content")
+                    .EnumerateObject().Select(property => property.Name).ToList();
+                Assert.True(
+                    requestMediaTypes.SequenceEqual((string[])["application/json"]),
+                    $"{method.ToUpperInvariant()} {route}: request body declares "
+                    + $"[{string.Join(", ", requestMediaTypes)}] instead of canonical application/json.");
+            }
+
+            foreach (var response in operation.GetProperty("responses").EnumerateObject())
+            {
+                var isError = response.Name.Length == 3
+                    && (response.Name[0] is '4' or '5');
+                if (isError || !response.Value.TryGetProperty("content", out var content))
+                {
+                    continue;
+                }
+
+                var responseMediaTypes = content.EnumerateObject()
+                    .Select(property => property.Name).ToList();
+                Assert.True(
+                    responseMediaTypes.SequenceEqual((string[])["application/json"]),
+                    $"{method.ToUpperInvariant()} {route}: {response.Name} declares "
+                    + $"[{string.Join(", ", responseMediaTypes)}] instead of canonical application/json.");
+            }
+        }
+    }
+
+    [Fact]
     public async Task DeclaredErrorResponses_AreProblemJsonWithSchema()
     {
-        // The committed surface declares no 4xx/5xx today, so without this
-        // probe the rewrite paths of ProblemDetailsContentTypeTransformer
-        // would be dead code under test: a schema-less rewrite (untyped error
+        // The probe pins rewrite paths the committed surface doesn't
+        // exercise (feedback declares typed errors, but nothing bodiless or
+        // [Produces]-annotated): a schema-less rewrite (untyped error
         // body for generated clients) could ship unnoticed. Media-type
         // presence alone is NOT enough — assert the schema too.
         using var document = await GetOpenApiDocumentAsync(withProbeController: true);
@@ -207,5 +248,49 @@ public class OpenApiDocumentContractTests(IntegrationTestWebApplicationFactory f
             .Select(element => element.GetString())
             .ToList();
         Assert.Contains("temperatureF", required);
+    }
+
+    [Fact]
+    public async Task FeedbackRequestSchema_PublishesTheMessageLengthBounds()
+    {
+        using var document = await GetOpenApiDocumentAsync();
+
+        var message = document.RootElement
+            .GetProperty("components")
+            .GetProperty("schemas")
+            .GetProperty("FeedbackRequest")
+            .GetProperty("properties")
+            .GetProperty("message");
+
+        // The runtime rejects 1-2-char messages with a 400; the contract must
+        // say so or generated clients hit undocumented errors. Guards the
+        // non-positional-record shape of FeedbackRequest: attributes on
+        // positional-record parameters silently vanish from the schema
+        // (docs/API.md "Error contract in the OpenAPI document").
+        Assert.Equal(3, message.GetProperty("minLength").GetInt32());
+        Assert.Equal(2000, message.GetProperty("maxLength").GetInt32());
+    }
+
+    [Fact]
+    public async Task IdempotentActions_DocumentTheReplayMarkerOnSuccess()
+    {
+        using var document = await GetOpenApiDocumentAsync();
+
+        var created = document.RootElement
+            .GetProperty("paths")
+            .GetProperty("/api/feedback")
+            .GetProperty("post")
+            .GetProperty("responses")
+            .GetProperty("201");
+
+        Assert.True(
+            created.GetProperty("headers").TryGetProperty("Idempotency-Replayed", out var header),
+            "The Idempotency-Key-guarded 201 must declare the Idempotency-Replayed header.");
+
+        // Only replays carry it — marking it required would make generated
+        // clients expect it on first executions too.
+        Assert.False(
+            header.TryGetProperty("required", out var required) && required.GetBoolean(),
+            "Idempotency-Replayed must stay optional: first executions don't send it.");
     }
 }

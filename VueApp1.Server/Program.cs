@@ -10,6 +10,7 @@ using OpenTelemetry.Trace;
 using System.Text.Json.Serialization;
 using VueApp1.Server;
 using VueApp1.Server.ExceptionHandlers;
+using VueApp1.Server.Idempotency;
 using VueApp1.Server.Mcp;
 using VueApp1.Server.Mcp.Tools;
 using VueApp1.Server.Middleware;
@@ -118,10 +119,13 @@ static void SetupApi(WebApplicationBuilder builder)
         });
         // Error-contract truth (docs/API.md "Error contract in the OpenAPI
         // document"): document the global 429, relabel declared 4xx/5xx as
-        // problem+json, and keep computed properties required in responses.
+        // problem+json, keep computed properties required in responses, and
+        // declare the replay marker on Idempotency-Key-guarded actions.
         options.AddSchemaTransformer<ComputedPropertySchemaTransformer>();
         options.AddOperationTransformer<RateLimitResponseTransformer>();
+        options.AddOperationTransformer<IdempotencyReplayedHeaderTransformer>();
         options.AddOperationTransformer<ProblemDetailsContentTypeTransformer>();
+        options.AddOperationTransformer<CanonicalJsonContentTransformer>();
     });
     // The handler enriches unhandled exceptions with traceId (+ details in
     // Development) before AddProblemDetails' default machinery writes them.
@@ -130,11 +134,26 @@ static void SetupApi(WebApplicationBuilder builder)
     builder.Services.AddSingleton(TimeProvider.System);
     // HybridCache: in-process L1 with stampede protection; add a distributed
     // L2 by registering IDistributedCache (e.g. AddStackExchangeRedisCache) —
-    // HybridCache picks it up automatically. Rule of thumb: L1 expiry ~1/6 of L2.
+    // HybridCache picks it up automatically. (The in-memory IDistributedCache
+    // that AddIdempotency registers below does NOT become an L2: HybridCache
+    // special-cases MemoryDistributedCache as not actually distributed and
+    // ignores it.) Rule of thumb: L1 expiry ~1/6 of L2.
     builder.Services.AddHybridCache();
     // Outbound HTTP with retries/timeouts/circuit-breaker when you add a client:
     // builder.Services.AddHttpClient("backend").AddStandardResilienceHandler();
+    // Run-after-the-response work (the post-signup email, cache warmup, ...):
+    // BackgroundWork/ ships a fully tested bounded-channel queue + draining
+    // hosted service that captures/restores ambient context (trace, culture,
+    // initiator stamp) across the enqueue boundary. Dormant until the first
+    // consumer uncomments it — decision guide: docs/BACKGROUND.md.
+    // builder.Services.AddBackgroundWorkQueue();
+    // Idempotency-Key seam for unsafe endpoints that clients retry
+    // (mobile/PWA networks, agent tool callers). Single-node guarantee with
+    // the in-memory defaults; cross-process upgrades in docs/PATTERNS.md.
+    // FeedbackController is the usage shape.
+    builder.Services.AddIdempotency();
     builder.Services.AddScoped<IWeatherForecastService, WeatherForecastService>();
+    builder.Services.AddScoped<IFeedbackService, FeedbackService>();
     // Host-header-injection-safe absolute links (emails, notifications):
     // generated from the configured PublicUri (bound + validated in
     // SetupOptionsValidation), never from request headers.

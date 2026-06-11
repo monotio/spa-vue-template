@@ -1,9 +1,10 @@
 # Documented patterns
 
-Patterns this template deliberately ships as documentation instead of code.
-A starter template earns its keep by staying lean: these become relevant when
-your app grows a particular feature, and pasting a documented pattern beats
-deleting shipped abstractions you never needed.
+Patterns this template deliberately ships as documentation instead of
+always-on code. A starter template earns its keep by staying lean: most
+entries are paste-when-needed recipes, and where correctness rules are
+code-shaped a dormant seam ships instead (`Idempotency/`, `BackgroundWork/`)
+— those sections carry the upgrade paths beyond the shipped seam.
 
 ## Minimal-API variant of the controller pattern
 
@@ -70,13 +71,33 @@ var admin = app.MapGroup("/api/admin")
 admin.MapPost("/reindex", () => Results.Accepted());
 ```
 
-## Idempotency-Key convention
+## Idempotency-Key: cross-process upgrades
 
-For unsafe endpoints that clients may retry (mobile networks, agent tools):
-accept an `Idempotency-Key` header, store `(key, response)` for a TTL window
-(HybridCache fits), and replay the stored response on key reuse. Combine with
-an `AsyncLocal`-backed request-context accessor when services deep in the
-stack need the key without parameter-threading.
+The seam itself ships as code (`Idempotency/`, demonstrated on
+`FeedbackController`) because its correctness rules are code-shaped and prose
+re-implementations lose them: payload-hash + response committed as ONE atomic
+record; commit under `CancellationToken.None` (a client disconnect after the
+mutation must not skip the commit and let the retry duplicate it);
+dispose-without-commit stores nothing (failures don't poison the key);
+fast-path read plus a double-check under the lock. The in-memory defaults are
+**single-node**; behind a load balancer, upgrade both halves:
+
+- **Storage**: register a real `IDistributedCache` (e.g.
+  `AddStackExchangeRedisCache`) — `IdempotencyService` needs no changes.
+  Note this also gives `HybridCache` a distributed L2 (it adopts any real
+  `IDistributedCache` automatically; the in-memory default is special-cased
+  and ignored) — one registration upgrades both consumers, by design.
+- **Lock**: implement `IIdempotencyLock` cross-process. Two known-good shapes:
+  - *SQL advisory lock* (when you've adopted a DB — docs/DATA.md): PostgreSQL
+    `SELECT pg_try_advisory_lock(hashtext(@key))` on a connection you hold
+    open until dispose (`pg_advisory_unlock` + return to pool), or SQL Server
+    `sp_getapplock @Resource=@key, @LockOwner='Session', @LockTimeout=0`.
+    Non-blocking acquire (`try`/timeout 0) is the point — a held key maps to
+    409 InProgress, not a queue of waiting requests.
+  - *Redis*: `SET key value NX PX <ttl>` as acquire; release with a
+    compare-and-delete script on the stored value so an expired holder can't
+    delete its successor's lock. The TTL bounds orphaned locks if a node dies
+    mid-request.
 
 ## Scoped DI factory: HTTP vs background context
 
@@ -90,6 +111,15 @@ builder.Services.AddScoped<ICurrentUser>(sp =>
         ? new HttpCurrentUser(http)
         : new SystemCurrentUser());
 ```
+
+Scope this fallback narrowly: `SystemCurrentUser` is for work that genuinely
+has no human cause (startup tasks, schedules). Work enqueued **on behalf of a
+user** must carry the user's identity through an explicit envelope instead —
+an ambient "system" default at that boundary silently misattributes
+user-initiated work in logs, traces and audit trails. That is why the shipped
+background queue (`BackgroundWork/`, [docs/BACKGROUND.md](BACKGROUND.md))
+fails closed: `EnqueueAsync` requires an initiator stamp and throws rather
+than guessing.
 
 ## Server-Timing entries from EF Core
 

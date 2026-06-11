@@ -14,4 +14,10 @@ public static class ProblemDetailTypes
 
     /// <summary>The resource exists but the operation conflicts with its current state.</summary>
     public const string ConflictingState = "/problems/conflicting-state";
+
+    /// <summary>An Idempotency-Key was reused with a different request payload (422).</summary>
+    public const string IdempotencyPayloadMismatch = "/problems/idempotency-payload-mismatch";
+
+    /// <summary>The original request carrying this Idempotency-Key is still in flight (409).</summary>
+    public const string IdempotencyInProgress = "/problems/idempotency-in-progress";
 }
