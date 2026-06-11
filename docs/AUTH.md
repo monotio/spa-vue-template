@@ -34,6 +34,34 @@ BFF exists to prevent.
 `AddAuthentication().AddJwtBearer()` against your IdP; keep the SPA on
 cookies and accept both schemes if you need both audiences.
 
+## Return-URL redirects: validate before you navigate
+
+Every login flow grows a `?returnUrl=` redirect, and the naive
+`startsWith('/')` check is an open redirect: `//evil.example`
+(protocol-relative), `/\evil.example` (backslash normalization), and
+`/%0d%0a/evil.example` (URLSearchParams decodes the CRLF; the browser then
+strips raw control characters at navigation time, leaving `//evil.example`)
+all pass it. Validate with the SAME parser the browser navigates with, then
+navigate a **recomposed** local path — never the raw input:
+
+```ts
+function safeLocalPath(input: string | null, fallback = '/'): string {
+  const url = input ? URL.parse(input, window.location.origin) : null;
+  if (!url || url.origin !== window.location.origin) return fallback;
+  return url.pathname + url.search + url.hash; // recomposed: origin-free by construction
+}
+
+void router.push(safeLocalPath(new URLSearchParams(window.location.search).get('returnUrl')));
+```
+
+Why this shape holds: `URL.parse` (Baseline 2024; returns `null` instead of
+throwing) resolves relative inputs against your origin, while every hostile
+form — protocol-relative, backslash, userinfo `@`, `javascript:` — resolves
+to a foreign (or `"null"`) origin and fails the comparison. Do **not**
+`decodeURIComponent` the whole input before checking: that over-rejects
+legitimate `%2F` segments and multi-byte UTF-8 — the parser already handles
+encoding correctly.
+
 ## When you add any of these
 
 - Add the authorization-matrix integration tests described in
