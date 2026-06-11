@@ -326,6 +326,42 @@ static void ConfigurePipeline(WebApplication app, PerformanceTuningOptions perfo
     app.UseOutputCache();
     app.UseAuthorization();
 
+    // Long-term caching contract for the SPA:
+    //   /assets/* and workbox-*.js  -> immutable (Vite emits ONLY content-hashed
+    //                                  filenames there; a new build = new URL)
+    //   index.html, sw.js, manifest.webmanifest -> no-cache (revalidate, so
+    //                                  deployments and SW updates propagate)
+    // MapStaticAssets can't infer this itself: it only marks assets immutable
+    // when fingerprinted by its OWN naming convention, and Vite's hashes are
+    // opaque to it — measured result was no-cache on every hashed asset, i.e.
+    // a conditional-GET round trip per file on every warm load. The override
+    // runs in OnStarting (LIFO: registered first, runs last) so it wins over
+    // whatever the static endpoint wrote.
+    app.Use(async (context, next) =>
+    {
+        var path = context.Request.Path;
+        var isHashedAsset = path.StartsWithSegments("/assets")
+            || (path.Value is { } p
+                && p.StartsWith("/workbox-", StringComparison.Ordinal)
+                && p.EndsWith(".js", StringComparison.Ordinal));
+        if (isHashedAsset)
+        {
+            context.Response.OnStarting(() =>
+            {
+                if (context.Response.StatusCode
+                    is StatusCodes.Status200OK
+                    or StatusCodes.Status304NotModified)
+                {
+                    context.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
+                }
+
+                return Task.CompletedTask;
+            });
+        }
+
+        await next();
+    });
+
     app.MapStaticAssets();
     // Safety net for wwwroot content added AFTER publish (e.g. the Docker image
     // copies the SPA dist in at image-assembly time): MapStaticAssets only
