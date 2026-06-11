@@ -141,9 +141,13 @@ jobs:
               npm_ci: "npm run setup", rebuild_trusted: "npm run setup", nuget_restore: "npm run setup",
               lint: "npm run lint:check", format: "npm run format:check", typecheck: "npm run type-check",
               fe_tests: "npm run test:frontend", build: "npm run build", openapi: "npm run openapi:check",
-              be_unit: "npm run test:backend", be_integration: "npm run test:backend -- --coverage" } as $repro
+              be_unit: "npm run test:backend",
+              be_integration: "npm run test:backend -- --coverage  (threshold gate is CI-only; see docs/GITHUB.md)" } as $repro
             | to_entries[] | select(.value.outcome == "failure")
             | "failed-step: \(.key)\nlocal-repro: \($repro[.key] // "npm run check")"')
+          # Steps without an id (checkout, setup-dotnet, setup-node, upload) never
+          # appear in the steps context, so a failure there yields an empty digest.
+          digest="${digest:-failed-step: (un-id'd checkout/setup/upload step — see full-log below)}"
           {
             echo "## CI failure digest (${{ matrix.os }})"
             echo '```'

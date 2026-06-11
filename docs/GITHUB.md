@@ -66,10 +66,18 @@ discipline in AGENTS.md):
    mapping is simple anyway: every ci.yml step is one npm wrapper
    (`lint` → `npm run lint:check`, `fe_tests` → `npm run test:frontend`,
    `be_unit`/`be_integration` → `npm run test:backend`, bootstrap steps →
-   `npm run setup`, `skills_drift` → `npm run skills:sync`).
-4. Test outputs (JUnit XML + coverage) are uploaded on every run, red or
-   green: `gh run download <run-id> -n test-results-<os>` (e.g.
-   `test-results-ubuntu-latest`).
+   `npm run setup`, `skills_drift` → `npm run skills:sync`). Caveat: the
+   `be_integration` 20% line-coverage threshold gate is CI-only
+   (coverlet.msbuild `/p:Threshold`); the local `--coverage` wrapper
+   collects coverage but never fails on it — a green local repro plus a
+   red CI `be_integration` step means the coverage gate, not a test.
+4. The `test-results-<os>` artifact
+   (`gh run download <run-id> -n test-results-ubuntu-latest`) contains the
+   frontend Vitest JUnit XML only, and it exists only when the Frontend
+   tests step actually ran — on earlier failures (setup, lint, format,
+   type-check) the upload step itself errors and there is no artifact.
+   Coverage output and backend test results are not uploaded; reach those
+   failures via step 2.
 5. Inline annotations are native, not bespoke: Vitest's `github-actions`
    reporter (wired in `test:ci`) and the .NET SDK's auto-detected GitHub
    logger both emit file/line annotations — don't add problem-matcher

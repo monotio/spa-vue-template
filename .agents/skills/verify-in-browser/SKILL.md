@@ -93,6 +93,10 @@ curl -skD - -o /dev/null https://localhost:57292/api/weatherforecast      # 200 
 #   → server-timing header present; verify the decimal point:
 #     grep -iE 'server-timing: .*dur=[0-9]+\.[0-9]'
 curl -sk -o /dev/null -w '%{http_code}' https://localhost:57292/manifest.webmanifest  # 200
+curl -skD - -o /dev/null 'https://localhost:57292/dev-sw.js?dev-sw' | grep -i 'content-type'
+#   → text/javascript = the dev SW script is served (devOptions in
+#     vite.config.ts); text/html means the SPA fallback answered and the
+#     SW was NOT generated. Activation itself still needs the browser tier.
 curl -skD - -o /dev/null https://localhost:7191/api/nosuchendpoint        # 404 + application/problem+json
 ```
 
