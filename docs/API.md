@@ -29,6 +29,41 @@ comments flow into the document (`GenerateDocumentationFile`) and render in
 Scalar (`/scalar/v1`, Development). RFC 9727 catalog at
 `/.well-known/api-catalog`.
 
+## Error contract in the OpenAPI document
+
+A committed contract is only as good as its truthfulness, and ASP.NET Core
+does not document error responses on its own — without help the contract
+would show a 200-only API while the runtime answers RFC 9457 on every error.
+The transformer pack in `VueApp1.Server/OpenApi/` closes that gap
+mechanically, for current and future endpoints (no per-action
+`ProducesResponseType` discipline needed):
+
+- `RateLimitResponseTransformer` — the rate limiter is a `GlobalLimiter`, so
+  every operation documents a 429 with a `Retry-After` header (delta-seconds)
+  and a problem+json body. `RateLimit-*` headers are deliberately NOT
+  documented: the runtime never emits them and the IETF draft defining them
+  is still unstable — documenting them would be a new contract lie.
+- `ProblemDetailsContentTypeTransformer` — ApiExplorer describes declared
+  4xx/5xx responses as plain `application/json` (and bodiless declarations as
+  no content); this pass relabels them `application/problem+json` and fills
+  in the `ProblemDetails` body the runtime actually sends.
+- `ComputedPropertySchemaTransformer` — get-only computed properties (e.g.
+  `WeatherForecast.TemperatureF`) are serialized on every response, but the
+  schema exporter only marks deserialization-required members as `required`;
+  this marks them `required` + `readOnly` so generated clients don't treat
+  them as optional.
+- JSON number handling is `Strict` (Program.cs, both MVC and minimal-API
+  options): the Web default `AllowReadingFromString` makes the exporter
+  document every int as an `["integer","string"]` union — which generated
+  TypeScript clients inherit as `number | string`.
+
+The runtime side of the 429 lives in the rate limiter's `OnRejected`: it
+writes through `IProblemDetailsService` (a bare `WriteAsJsonAsync` mislabels
+the body as plain `application/json`) and derives `Retry-After` from the
+rejected lease's `MetadataName.RetryAfter` (time until the window resets),
+falling back to the configured window length.
+`OpenApiDocumentContractTests` pins all of these invariants.
+
 ## Pipeline order (and why)
 
 1. Security headers (every response, including errors, gets them)
@@ -66,5 +101,9 @@ docs/PATTERNS.md).
 - xUnit v3: package `xunit.v3`, namespace `using Xunit;` unchanged.
 - OpenAPI.NET 2.0: `JsonNode` replaces `OpenApiAny`; `JsonSchemaType` is
   bitwise flags for nullable.
+- Registering a schema component from a transformer: ASP.NET Core's
+  `AddOpenApiSchemaByReference` extension is internal — use
+  `document.AddComponent<IOpenApiSchema>(id, schema)` plus
+  `new OpenApiSchemaReference(id, document)` (both public OpenAPI.NET 2.x).
 - Integration tests disable hosting startup
   (`PreventHostingStartupKey`) so SpaProxy never launches inside tests.
