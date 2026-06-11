@@ -75,12 +75,11 @@ Full command/agent guidance: [AGENTS.md](AGENTS.md).
 
 ## Supply-chain notes you should know
 
-- **npm install scripts are disabled** (`.npmrc ignore-scripts=true`) — the
-  dominant npm attack vector is off by default. The flip side: a new
+- **npm install scripts are disabled** (root `.npmrc ignore-scripts=true`) —
+  the dominant npm attack vector is off by default. The flip side: a new
   dependency that needs its postinstall must be added to the
   `rebuild-trusted` allow-list in `vueapp1.client/package.json` (and that's
-  deliberately a visible, reviewable event). To opt out, delete the two
-  `.npmrc` files.
+  deliberately a visible, reviewable event). To opt out, delete `.npmrc`.
 - **Build provenance**: artifacts built on master are attested; verify with
   `gh attestation verify <artifact> --repo <owner>/<repo>`.
 - **Microsoft.OpenApi stays 2.x** — documented trap, enforced via Dependabot

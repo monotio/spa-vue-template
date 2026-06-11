@@ -59,6 +59,9 @@ Production-grade SPA template:
   details everywhere; OpenAPI 3.1 + Scalar at `/scalar/v1` (Development).
 - **Solution**: `VueApp1.slnx`; central package versions in `Directory.Packages.props`;
   NuGet lockfiles restored with locked-mode in CI.
+- **npm workspaces**: `vueapp1.client` is a workspace of the root manifest —
+  ONE root `package-lock.json`, one `npm ci` at the root, dependencies
+  hoisted to the root `node_modules`. The `npm --prefix` wrappers still work.
 - Dev: backend hosts and proxies to Vite; HTTPS via auto-generated dev certs.
   Prod: backend serves the built SPA with an `index.html` fallback (PWA-aware,
   no-cache) and ProblemDetails 404s for unmatched `/api` routes.

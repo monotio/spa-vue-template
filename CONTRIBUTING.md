@@ -13,13 +13,12 @@ Thanks for helping make this template better!
   documentation over abstraction, npm one-liners over new scripts, and
   deliberate non-decisions (no DB, no auth) over half-baked defaults.
 - New dependencies need a reason in the PR description. Anything with an npm
-  install script must be added to `rebuild-trusted` (see
-  `vueapp1.client/.npmrc`).
+  install script must be added to `rebuild-trusted` (see the root `.npmrc`).
 
 ## Dev setup
 
 See the README quickstart. TL;DR: install the .NET SDK from `global.json`,
-Node from `.nvmrc`, then `npm ci --prefix vueapp1.client` and `npm run check`.
+Node from `.nvmrc`, then `npm run setup` and `npm run check`.
 
 ## Reporting bugs / proposing features
 
