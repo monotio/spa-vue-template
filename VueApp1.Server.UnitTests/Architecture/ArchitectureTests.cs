@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using Microsoft.AspNetCore.Mvc;
 using VueApp1.Server.Controllers;
 using Xunit;
@@ -22,8 +23,10 @@ public class ArchitectureTests
     public void Controllers_InheritApiControllerBase()
     {
         var violations = _serverAssembly.GetTypes()
-            .Where(type => typeof(ControllerBase).IsAssignableFrom(type)
+            .Where(type => type.IsClass
                 && !type.IsAbstract
+                && !IsCompilerGenerated(type)
+                && (typeof(ControllerBase).IsAssignableFrom(type) || IsDiscoverablePocoController(type))
                 && !typeof(ApiControllerBase).IsAssignableFrom(type))
             .Select(type => type.FullName)
             .ToList();
@@ -45,14 +48,15 @@ public class ArchitectureTests
         // suffixes (e.g. UriLinkGenerator) may return domain types.
         var violations = new List<string>();
         var serviceContracts = _serverAssembly.GetTypes()
-            .Where(type => type.Namespace == ServicesNamespace
+            .Where(type => IsInServicesNamespace(type)
+                && !IsCompilerGenerated(type)
                 && type.Name.EndsWith("Service", StringComparison.Ordinal));
 
         foreach (var type in serviceContracts)
         {
             var offendingMethods = type
                 .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
-                .Where(method => !method.IsSpecialName && !IsServiceResponseShaped(method.ReturnType))
+                .Where(method => IsContractMethod(type, method) && !IsServiceResponseShaped(method.ReturnType))
                 .Select(method => $"{type.Name}.{method.Name}");
             violations.AddRange(offendingMethods);
         }
@@ -74,14 +78,28 @@ public class ArchitectureTests
         // enough to catch the real failure mode: a service returning
         // IActionResult/ProblemDetails instead of a ServiceResponse.
         var violations = new List<string>();
+        // Internal types are deliberately in scope — layering rules do not
+        // weaken with the access modifier; only compiler-generated noise
+        // (closures, state machines) is excluded.
         var serviceTypes = _serverAssembly.GetTypes()
-            .Where(type => type.Namespace == ServicesNamespace && type.IsPublic);
+            .Where(type => IsInServicesNamespace(type) && !IsCompilerGenerated(type));
 
         foreach (var type in serviceTypes)
         {
             if (type.BaseType is not null)
             {
                 CollectMvcTypes(type.BaseType, $"{type.Name} base type", violations);
+            }
+
+            foreach (var implementedInterface in type.GetInterfaces())
+            {
+                CollectMvcTypes(implementedInterface, $"{type.Name} implements", violations);
+            }
+
+            foreach (var field in type.GetFields(
+                BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly))
+            {
+                CollectMvcTypes(field.FieldType, $"{type.Name}.{field.Name}", violations);
             }
 
             foreach (var method in type.GetMethods(
@@ -124,6 +142,71 @@ public class ArchitectureTests
                 + "ServiceResponse (AGENTS.md, Architecture Rules: API layer). "
                 + $"Violations: {string.Join(", ", violations)}");
         }
+    }
+
+    private static readonly Type[] _disposableInterfaces = [typeof(IDisposable), typeof(IAsyncDisposable)];
+
+    private static bool IsInServicesNamespace(Type type) =>
+        type.Namespace == ServicesNamespace
+        || type.Namespace?.StartsWith(ServicesNamespace + ".", StringComparison.Ordinal) == true;
+
+    private static bool IsCompilerGenerated(Type type) =>
+        type.IsDefined(typeof(CompilerGeneratedAttribute), inherit: false)
+        || type.Name.Contains('<', StringComparison.Ordinal);
+
+    /// <summary>
+    /// Mirrors MVC's <c>ControllerFeatureProvider.IsController</c>: ASP.NET
+    /// Core also discovers POCO controllers (public class with the
+    /// "Controller" suffix or [Controller]/[ApiController]) that never derive
+    /// from ControllerBase — exactly the shape that would otherwise serve
+    /// routes while bypassing HandleServiceResponse unseen.
+    /// </summary>
+    private static bool IsDiscoverablePocoController(Type type) =>
+        type.IsPublic
+        && !type.ContainsGenericParameters
+        && !type.IsDefined(typeof(NonControllerAttribute), inherit: true)
+        && (type.Name.EndsWith("Controller", StringComparison.Ordinal)
+            || type.IsDefined(typeof(ControllerAttribute), inherit: true));
+
+    /// <summary>
+    /// Object overrides (ToString/Equals/GetHashCode) and the dispose pattern
+    /// are legitimate non-contract members; only genuine service operations
+    /// must be ServiceResponse-shaped.
+    /// </summary>
+    private static bool IsContractMethod(Type type, MethodInfo method)
+    {
+        if (method.IsSpecialName)
+        {
+            return false;
+        }
+
+        if (method.GetBaseDefinition().DeclaringType == typeof(object))
+        {
+            return false;
+        }
+
+        return !ImplementsDisposeMethod(type, method);
+    }
+
+    private static bool ImplementsDisposeMethod(Type type, MethodInfo method)
+    {
+        if (type.IsInterface)
+        {
+            // An interface inheriting IDisposable/IAsyncDisposable does not
+            // re-declare Dispose, so DeclaredOnly never surfaces it here.
+            return false;
+        }
+
+        foreach (var disposableInterface in _disposableInterfaces)
+        {
+            if (disposableInterface.IsAssignableFrom(type)
+                && type.GetInterfaceMap(disposableInterface).TargetMethods.Contains(method))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool IsServiceResponseShaped(Type returnType)
