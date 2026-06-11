@@ -155,6 +155,11 @@ Production-grade SPA template:
 
 - The repo must build and test with **zero secrets** — placeholder config
   boots the backend (design goal; keep it true).
+- **Runtime client errors appear in dev-server stdout**: Vite's
+  `server.forwardConsole` (explicit in vite.config.ts) forwards browser
+  `console.error`/`warn` and unhandled errors/rejections to the terminal
+  running `dev:client`/`dev:server` — read them there before reaching for
+  browser tooling (needs a connected browser session; see docs/FRONTEND.md).
 - Sandboxed runtimes (Codex-class): MSBuild/npm need network + elevated
   permissions for restore/build/test — request escalation with a one-line
   justification for any command that restores or installs.

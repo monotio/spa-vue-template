@@ -19,7 +19,8 @@
         "Vue.volar",
         "dbaeumer.vscode-eslint",
         "esbenp.prettier-vscode",
-        "ms-dotnettools.csdevkit"
+        "EditorConfig.EditorConfig",
+        "ms-dotnettools.csharp"
       ]
     }
   }

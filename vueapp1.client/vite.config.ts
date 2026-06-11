@@ -4,6 +4,7 @@ import { fileURLToPath, URL } from 'node:url';
 
 import { defineConfig } from 'vite';
 import plugin from '@vitejs/plugin-vue';
+import vueDevTools from 'vite-plugin-vue-devtools';
 import { VitePWA } from 'vite-plugin-pwa';
 import fs from 'fs';
 import path from 'path';
@@ -52,9 +53,13 @@ const target = env['ASPNETCORE_HTTPS_PORT']
     : 'https://localhost:7191';
 
 // https://vitejs.dev/config/
-export default defineConfig(({ command }) => ({
+export default defineConfig(({ command, mode }) => ({
   plugins: [
     plugin(),
+    // In-browser Vue DevTools overlay (component tree, Pinia stores, router
+    // state, timeline) — no browser extension needed. Dev-server only; Vitest
+    // also resolves this config with command === 'serve', so gate on mode too.
+    ...(command === 'serve' && mode !== 'test' ? [vueDevTools()] : []),
     VitePWA({
       // 'prompt' + ReloadPrompt.vue gives users an explicit "reload to update"
       // affordance; switch to 'autoUpdate' for silent updates.
@@ -112,6 +117,10 @@ export default defineConfig(({ command }) => ({
     }),
   ],
   resolve: {
+    // Must agree with `paths` in tsconfig.app.json. Vite 8's native
+    // resolve.tsconfigPaths would make tsconfig the single source of truth,
+    // but it currently breaks dependency pre-bundling here — see the watch
+    // list in docs/FRONTEND.md before switching.
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
@@ -179,7 +188,20 @@ export default defineConfig(({ command }) => ({
     port: parseInt(env['DEV_SERVER_PORT'] ?? '57292'),
     // The cert is only ensured/read when actually serving — builds (incl.
     // Docker) and vitest never touch dotnet dev-certs.
-    ...(command === 'serve' ? { https: toHttpsOptions(ensureDevCertificate()) } : {}),
+    ...(command === 'serve'
+      ? {
+          https: toHttpsOptions(ensureDevCertificate()),
+          // Forward browser console output and unhandled errors/rejections to
+          // dev-server stdout — the stream terminal-bound coding agents read.
+          // Vite auto-enables this only when it detects an agent; explicit
+          // config makes it deterministic for human-started servers too.
+          // NOTE: the object form defaults logLevels to [] — list them.
+          // error/warn suffices: logger.ts logs through console.warn/error
+          // and console.log is lint-banned in src, so wider levels would only
+          // surface third-party noise.
+          forwardConsole: { unhandledErrors: true, logLevels: ['error', 'warn'] },
+        }
+      : {}),
   },
 }));
 

@@ -1,0 +1,15 @@
+{
+  // VS Code only reads extensions.json from the workspace root — this list
+  // must cover both stacks. settings.json already assumes the Prettier and
+  // C# extensions (default formatters) and ESLint flat config; without
+  // Vue (Official) there is no SFC type checking at all.
+  // ms-dotnettools.csharp (MIT) is deliberate over csdevkit (Visual Studio
+  // license terms) for a public template.
+  "recommendations": [
+    "Vue.volar",
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "EditorConfig.EditorConfig",
+    "ms-dotnettools.csharp"
+  ]
+}
