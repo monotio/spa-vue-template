@@ -11,7 +11,8 @@ collects the deep-dive knowledge; style rules live in [AGENTS.md](../AGENTS.md).
   `useDirtyGuard` (unsaved-changes guard), `useDownload` (file exports)
 - `src/services/` — typed API clients built on `useFetch`
 - `src/stores/` — Pinia composition stores
-- `src/contracts/` — wire types + runtime validators for API responses
+- `src/contracts/` — wire types (generated from the OpenAPI contract) +
+  runtime validators for API responses
 - `src/utils/logger.ts` — the logging seam (`console.*` is banned in src)
 
 ## Routing
@@ -58,6 +59,35 @@ prevents race conditions on rapid re-requests. For server-state caching,
 dedup, and optimistic updates, [Pinia Colada](https://pinia-colada.esm.dev/)
 is the officially recommended layer — wire its query functions through the
 same typed fetch + ProblemDetails parser to keep error handling uniform.
+
+## Generated API types
+
+`src/contracts/api.gen.ts` is generated from the committed OpenAPI contract
+by `npm run openapi:sync` ([openapi-typescript](https://openapi-ts.dev/),
+devDependency, zero runtime cost) and joins the same drift gate: `npm run
+openapi:check` — part of `npm run check` and CI — fails when it's stale.
+Change the API surface, run `openapi:sync`, and `vue-tsc` flags every stale
+frontend consumer at compile time. Conventions:
+
+- **Re-export, don't scatter**: consume schema types through a hand-named
+  contract module (`src/contracts/weather.ts` re-exports
+  `components['schemas']['WeatherForecast']`) instead of spreading
+  `components[...]` lookups through the app.
+- **Keep the runtime guards** (`assertWeatherForecastList`): generated types
+  are compile-time promises about the wire — a version-skewed server or a
+  misbehaving proxy breaks them at runtime, and the guard turns that into a
+  loud error next to its cause.
+- The file carries a do-not-edit header and is ESLint- and Prettier-ignored:
+  regenerate it, never edit or reformat it.
+- **Types only, deliberately no generated client**: `useFetch` stays the
+  single fetch boundary (lint-enforced). If your app later wants a full SDK,
+  openapi-fetch / Hey API are the upgrade path — wire them through the same
+  ProblemDetails handling.
+- openapi-typescript declares a `typescript ^5.x` peer while the template
+  runs TS 6; the root `package.json` `overrides` entry widens that edge.
+  Drop the override once upstream catches up. A Dependabot bump of
+  openapi-typescript can legitimately change the emitted output — run
+  `npm run openapi:sync` and commit the regenerated file in the same PR.
 
 ## VueUse
 

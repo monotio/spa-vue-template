@@ -23,7 +23,10 @@ Every non-2xx response is `application/problem+json`:
 
 `docs/openapi/openapi.v1.json` is committed; CI regenerates the document by
 booting the real server (Testing environment) and fails on drift. After any
-API-surface change: `npm run openapi:sync` and commit the diff. The harvested
+API-surface change: `npm run openapi:sync` and commit the diff. The sync also
+regenerates the frontend's compile-time view of the contract
+(`vueapp1.client/src/contracts/api.gen.ts`, see docs/FRONTEND.md "Generated
+API types"), and `openapi:check` gates both artifacts. The harvested
 `servers` array is stripped (it embeds the ephemeral localhost port). XML doc
 comments flow into the document (`GenerateDocumentationFile`) and render in
 Scalar (`/scalar/v1`, Development). RFC 9727 catalog at
