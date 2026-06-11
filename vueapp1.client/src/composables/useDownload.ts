@@ -1,5 +1,5 @@
 import { ref, computed } from 'vue';
-import { ProblemError, StatusCodeError, isOfflineError } from '@/utils/errors';
+import { createResponseError, isOfflineError } from '@/utils/errors';
 
 /**
  * Extracts the server-suggested filename from a Content-Disposition header.
@@ -79,7 +79,10 @@ export function useDownload() {
       }
 
       if (!response.ok) {
-        return await throwResponseError(response);
+        // Failed exports come back as ProblemDetails JSON, not a downloadable
+        // body — the shared classifier (utils/errors.ts) throws the same
+        // typed errors as useFetch, so error handling stays uniform.
+        throw await createResponseError(response);
       }
 
       const blob = await response.blob();
@@ -94,31 +97,6 @@ export function useDownload() {
   }
 
   return { isDownloading, download };
-}
-
-// Failed exports come back as ProblemDetails JSON, not a downloadable body —
-// mirrors the error path of useFetch's handleResponse (which stays private:
-// useFetch is deliberately JSON-only).
-async function throwResponseError(response: Response): Promise<never> {
-  const contentType = response.headers.get('content-type');
-  if (
-    contentType?.includes('application/problem+json') ||
-    contentType?.includes('application/json')
-  ) {
-    const text = await response.text();
-    try {
-      throw new ProblemError(JSON.parse(text));
-    } catch (e) {
-      if (e instanceof ProblemError) throw e;
-      throw new StatusCodeError(response.status, text, response.headers);
-    }
-  }
-
-  throw new StatusCodeError(
-    response.status,
-    `${response.status} ${response.statusText}`,
-    response.headers,
-  );
 }
 
 // Anchor + temporary object URL is the portable save mechanism: the File

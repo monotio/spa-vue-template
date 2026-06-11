@@ -13,6 +13,19 @@ describe('ProblemError', () => {
     const error = new ProblemError({ title: 'Bad Request' }, 'custom');
     expect(error.message).toBe('custom');
   });
+
+  it('falls back to detail when title is absent', () => {
+    // RFC 9457 makes title optional; detail IS the human-readable
+    // explanation — a detail-only problem must not surface as the
+    // generic "Request failed".
+    const error = new ProblemError({ detail: 'Database connection pool exhausted', status: 503 });
+    expect(error.message).toBe('Database connection pool exhausted');
+  });
+
+  it('prefers title over detail when both are present', () => {
+    const error = new ProblemError({ title: 'Service Unavailable', detail: 'Pool exhausted' });
+    expect(error.message).toBe('Service Unavailable');
+  });
 });
 
 describe('StatusCodeError', () => {

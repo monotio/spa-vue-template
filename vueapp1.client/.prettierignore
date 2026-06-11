@@ -1,0 +1,3 @@
+# Generated artifacts keep their generator's formatting — reformatting them
+# locally would make the next `npm run openapi:sync` a noisy diff.
+src/contracts/api.gen.ts

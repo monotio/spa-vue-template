@@ -1,5 +1,5 @@
 import { ref, computed } from 'vue';
-import { ProblemError, StatusCodeError, isOfflineError } from '@/utils/errors';
+import { ProblemError, StatusCodeError, createResponseError, isOfflineError } from '@/utils/errors';
 
 type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -25,25 +25,9 @@ export function useFetch() {
       return (await response.json()) as TResponse;
     }
 
-    const contentType = response.headers.get('content-type');
-    if (
-      contentType?.includes('application/problem+json') ||
-      contentType?.includes('application/json')
-    ) {
-      const text = await response.text();
-      try {
-        throw new ProblemError(JSON.parse(text));
-      } catch (e) {
-        if (e instanceof ProblemError) throw e;
-        throw new StatusCodeError(response.status, text, response.headers);
-      }
-    }
-
-    throw new StatusCodeError(
-      response.status,
-      `${response.status} ${response.statusText}`,
-      response.headers,
-    );
+    // RFC 9457 classification and normalization live in utils/errors.ts —
+    // shared with useDownload so both boundaries treat errors identically.
+    throw await createResponseError(response);
   }
 
   function wrapFetchError(error: unknown): never {
