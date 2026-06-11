@@ -60,6 +60,22 @@ dedup, and optimistic updates, [Pinia Colada](https://pinia-colada.esm.dev/)
 is the officially recommended layer — wire its query functions through the
 same typed fetch + ProblemDetails parser to keep error handling uniform.
 
+Error classification at this boundary is spec-aware (`createResponseError` in
+`src/utils/errors.ts`, shared by `useFetch` and `useDownload`):
+`application/problem+json` is authoritative, but a plain `application/json`
+error body must carry at least one RFC 9457 descriptive field
+(`type`/`title`/`detail`/`instance`) before it counts as ProblemDetails —
+gateway/proxy envelopes like `{status, message}` also carry a status code,
+and misclassifying them buries their message behind a generic
+"Request failed" (their `message` surfaces through `StatusCodeError`
+instead). Normalization follows the RFC: the HTTP status wins over the
+body's advisory `status` (§3.1), extension members like `traceId` are
+preserved and typed via the `ProblemDetails` index signature (§3.2), and
+`statusText` backfills `title` only when the body has neither title nor
+detail. The template's own backend always speaks problem+json — this
+hardening matters the day a load balancer, CDN error page, or third-party
+API sits in front of (or beside) it.
+
 ## Generated API types
 
 `src/contracts/api.gen.ts` is generated from the committed OpenAPI contract
