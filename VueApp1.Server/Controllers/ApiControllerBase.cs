@@ -2,9 +2,15 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace VueApp1.Server.Controllers;
 
+// Deliberately NO class-level [Produces("application/json")]: ProducesAttribute
+// is a result filter that REPLACES the content types on every ObjectResult,
+// which relabels RFC 9457 error bodies (the automatic 400
+// ValidationProblemDetails, filter-produced 409/422 problems) as plain
+// application/json on the wire — silently breaking the "problem details on
+// every error" contract. JSON needs no forcing here: the JSON formatters are
+// the only registered output formatters.
 [ApiController]
 [Route("api/[controller]")]
-[Produces("application/json")]
 public abstract class ApiControllerBase : ControllerBase
 {
     protected ActionResult HandleServiceResponse(ServiceResponse response, Func<ActionResult> onSuccess)

@@ -10,6 +10,7 @@ using OpenTelemetry.Trace;
 using System.Text.Json.Serialization;
 using VueApp1.Server;
 using VueApp1.Server.ExceptionHandlers;
+using VueApp1.Server.Idempotency;
 using VueApp1.Server.Middleware;
 using VueApp1.Server.OpenApi;
 using VueApp1.Server.Services;
@@ -116,6 +117,7 @@ static void SetupApi(WebApplicationBuilder builder)
         options.AddSchemaTransformer<ComputedPropertySchemaTransformer>();
         options.AddOperationTransformer<RateLimitResponseTransformer>();
         options.AddOperationTransformer<ProblemDetailsContentTypeTransformer>();
+        options.AddOperationTransformer<CanonicalJsonContentTransformer>();
     });
     // The handler enriches unhandled exceptions with traceId (+ details in
     // Development) before AddProblemDetails' default machinery writes them.
@@ -128,7 +130,19 @@ static void SetupApi(WebApplicationBuilder builder)
     builder.Services.AddHybridCache();
     // Outbound HTTP with retries/timeouts/circuit-breaker when you add a client:
     // builder.Services.AddHttpClient("backend").AddStandardResilienceHandler();
+    // Run-after-the-response work (the post-signup email, cache warmup, ...):
+    // BackgroundWork/ ships a fully tested bounded-channel queue + draining
+    // hosted service that captures/restores ambient context (trace, culture,
+    // initiator stamp) across the enqueue boundary. Dormant until the first
+    // consumer uncomments it — decision guide: docs/BACKGROUND.md.
+    // builder.Services.AddBackgroundWorkQueue();
+    // Idempotency-Key seam for unsafe endpoints that clients retry
+    // (mobile/PWA networks, agent tool callers). Single-node guarantee with
+    // the in-memory defaults; cross-process upgrades in docs/PATTERNS.md.
+    // FeedbackController is the usage shape.
+    builder.Services.AddIdempotency();
     builder.Services.AddScoped<IWeatherForecastService, WeatherForecastService>();
+    builder.Services.AddScoped<IFeedbackService, FeedbackService>();
     // Host-header-injection-safe absolute links (emails, notifications):
     // generated from the configured PublicUri (bound + validated in
     // SetupOptionsValidation), never from request headers.

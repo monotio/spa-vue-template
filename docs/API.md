@@ -60,6 +60,18 @@ mechanically, for current and future endpoints (no per-action
   naive relabel would ship an untyped error body. This pass rewrites every
   error response to a single `application/problem+json` entry, preserving a
   declared schema and backfilling `ProblemDetails` when none was declared.
+- `CanonicalJsonContentTransformer` — there is deliberately NO class-level
+  `[Produces("application/json")]` on `ApiControllerBase`: `ProducesAttribute`
+  is a result filter that REPLACES the content types on every `ObjectResult`,
+  which relabels RFC 9457 error bodies (the automatic 400
+  `ValidationProblemDetails`, filter-produced problems) as plain
+  `application/json` **on the wire** — found when the Idempotency-Key filter's
+  422 came back mislabeled. Without `[Produces]`, though, ApiExplorer
+  describes every typed 2xx as `text/plain` + `application/json` + `text/json`
+  and JSON request bodies as three alias types; this pass collapses success
+  responses and request bodies to the canonical `application/json` entry
+  (`text/plain` is a lie for object results — no registered formatter writes
+  objects as plain text).
 - `ComputedPropertySchemaTransformer` — get-only computed properties (e.g.
   `WeatherForecast.TemperatureF`) are serialized on every response, but the
   schema exporter only marks deserialization-required members as `required`;

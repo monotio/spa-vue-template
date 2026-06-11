@@ -126,11 +126,52 @@ public class OpenApiDocumentContractTests(IntegrationTestWebApplicationFactory f
     }
 
     [Fact]
+    public async Task SuccessResponsesAndRequestBodies_DeclareOnlyCanonicalJson()
+    {
+        using var document = await GetOpenApiDocumentAsync();
+
+        foreach (var (route, method, operation) in EnumerateOperations(document.RootElement))
+        {
+            // Without a class-level [Produces] (deliberately absent — it
+            // would relabel problem+json error bodies on the wire; see
+            // ApiControllerBase), ApiExplorer emits content-negotiation noise
+            // (text/plain + alias entries). CanonicalJsonContentTransformer
+            // collapses it; this pin keeps future endpoints noise-free.
+            if (operation.TryGetProperty("requestBody", out var requestBody))
+            {
+                var requestMediaTypes = requestBody.GetProperty("content")
+                    .EnumerateObject().Select(property => property.Name).ToList();
+                Assert.True(
+                    requestMediaTypes.SequenceEqual((string[])["application/json"]),
+                    $"{method.ToUpperInvariant()} {route}: request body declares "
+                    + $"[{string.Join(", ", requestMediaTypes)}] instead of canonical application/json.");
+            }
+
+            foreach (var response in operation.GetProperty("responses").EnumerateObject())
+            {
+                var isError = response.Name.Length == 3
+                    && (response.Name[0] is '4' or '5');
+                if (isError || !response.Value.TryGetProperty("content", out var content))
+                {
+                    continue;
+                }
+
+                var responseMediaTypes = content.EnumerateObject()
+                    .Select(property => property.Name).ToList();
+                Assert.True(
+                    responseMediaTypes.SequenceEqual((string[])["application/json"]),
+                    $"{method.ToUpperInvariant()} {route}: {response.Name} declares "
+                    + $"[{string.Join(", ", responseMediaTypes)}] instead of canonical application/json.");
+            }
+        }
+    }
+
+    [Fact]
     public async Task DeclaredErrorResponses_AreProblemJsonWithSchema()
     {
-        // The committed surface declares no 4xx/5xx today, so without this
-        // probe the rewrite paths of ProblemDetailsContentTypeTransformer
-        // would be dead code under test: a schema-less rewrite (untyped error
+        // The probe pins rewrite paths the committed surface doesn't
+        // exercise (feedback declares typed errors, but nothing bodiless or
+        // [Produces]-annotated): a schema-less rewrite (untyped error
         // body for generated clients) could ship unnoticed. Media-type
         // presence alone is NOT enough — assert the schema too.
         using var document = await GetOpenApiDocumentAsync(withProbeController: true);
