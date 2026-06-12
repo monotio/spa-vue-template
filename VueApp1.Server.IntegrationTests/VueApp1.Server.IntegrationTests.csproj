@@ -11,6 +11,9 @@
          level so spec-revision wire changes ride on the SDK bump, not on
          hand-rolled JSON-RPC payloads. -->
     <PackageReference Include="ModelContextProtocol.Core" />
+    <!-- IChatClient/ChatResponseUpdate — AgentEndpointTests pre-register the
+         scripted FakeChatClient so the agent loop runs with zero secrets. -->
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="xunit.runner.visualstudio">
@@ -29,6 +32,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\VueApp1.Server\VueApp1.Server.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- ONE scripted IChatClient for both test projects — linked, not
+         copied, so the unit and integration suites can never drift apart. -->
+    <Compile Include="..\VueApp1.Server.UnitTests\Agent\FakeChatClient.cs" Link="Agent\FakeChatClient.cs" />
   </ItemGroup>
 
   <ItemGroup>

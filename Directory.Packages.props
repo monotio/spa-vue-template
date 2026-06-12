@@ -26,6 +26,20 @@
     <!-- Unified L1 (in-memory) + optional L2 (distributed) cache with stampede protection. -->
     <PackageVersion Include="Microsoft.Extensions.Caching.Hybrid" Version="10.7.0" />
     <!--
+      Agent module (VueApp1.Server/Agent, opt-in via Agent:Enabled): the
+      hand-rolled loop codes against IChatClient ONLY, so this is the sole
+      AI pin — promoted from a transitive (ModelContextProtocol.Core carries
+      10.5.2) to a direct reference so the agent surface owns its version.
+      The main Microsoft.Extensions.AI middleware package is deliberately NOT
+      referenced: the visible loop in AgentLoopService is the product, and
+      Abstractions-only takes no bets on middleware behavior.
+      Treat Dependabot bumps of Microsoft.Extensions.AI.* (and, once the
+      provider PR lands, Anthropic / OpenAI) like the ModelContextProtocol
+      rule above: run the AgentEndpointTests suite — a breaking bump must
+      fail loudly in CI, never silently.
+    -->
+    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.7.0" />
+    <!--
       Official C# MCP SDK (Microsoft + Anthropic). Deliberately PINNED rather than
       floated: the MCP spec is still revising its transport layer, and this SDK is
       where those wire changes land — treat its Dependabot bumps as protocol

@@ -7,6 +7,9 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <!-- IChatClient/ChatMessage/AIContent — the agent tests script the
+         provider seam (FakeChatClient) and assert on transcript blocks. -->
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
     <!-- MCP protocol types (CallToolResult, TextContentBlock) asserted on by
          the McpToolResults envelope tests. -->
     <PackageReference Include="ModelContextProtocol.Core" />

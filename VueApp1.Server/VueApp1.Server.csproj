@@ -13,6 +13,10 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
     <PackageReference Include="Microsoft.AspNetCore.SpaProxy" />
+    <!-- Agent module: the loop codes against IChatClient from Abstractions
+         ONLY (no Microsoft.Extensions.AI middleware package — see
+         Directory.Packages.props rationale). -->
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Caching.Hybrid" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" />
     <PackageReference Include="NetEscapades.AspNetCore.SecurityHeaders" />
