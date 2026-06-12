@@ -40,6 +40,15 @@ const router = createRouter({
       meta: { title: 'Weather forecast' },
     },
     {
+      // Lazy on purpose: the agent showcase (and its SSE composable) costs
+      // visitors nothing until they open it — and the whole feature deletes
+      // cleanly with this route + the agent folders.
+      path: '/agent',
+      name: 'agent',
+      component: () => import('@/pages/AgentPage.vue'),
+      meta: { title: 'Agent chat' },
+    },
+    {
       // The backend's index.html fallback and the service worker's
       // navigateFallback both answer unknown URLs with the SPA shell — this
       // catch-all is the third leg of that story. Without it, a typo URL

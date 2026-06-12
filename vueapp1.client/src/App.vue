@@ -25,6 +25,7 @@ router.afterEach(async (to, from) => {
     <nav>
       <RouterLink to="/"> Home </RouterLink>
       <RouterLink to="/weather"> Weather </RouterLink>
+      <RouterLink to="/agent"> Agent </RouterLink>
     </nav>
   </header>
 
