@@ -46,6 +46,40 @@ Template invariants to keep when you add a stream endpoint:
   after mapping it, or `ExcludeFromDescription()` if you treat the stream as
   out-of-contract.
 
+## POST-initiated streams: useAgentStream is the in-repo reference
+
+`EventSource` can only GET. When the stream is the RESPONSE to a POST (a
+body-carrying request that starts work — the agent module's
+`/api/agent/.../turns` is the shipped example), the client is `fetch` +
+`ReadableStream`, and the template ships exactly one sanctioned consumer:
+`src/composables/useAgentStream.ts` (the narrow `no-direct-fetch` allowlist
+entry in `eslint.config.ts`). Copy its `parseSseStream` rather than writing
+a new one — it encodes the chunk-boundary failure modes that silently
+corrupt naive `split('\n\n')` parsers and is locked by adversarial fixtures
+(`src/composables/__tests__/useAgentStream.spec.ts`):
+
+- **multi-byte UTF-8 split mid-character** across reads — decode with ONE
+  `TextDecoder` in `{ stream: true }` mode; never `decode()` per chunk.
+  Compute fixture split points in UTF-8 **bytes**: `String#indexOf` counts
+  UTF-16 units, and a code-unit offset lands on a character boundary in the
+  byte array — a fixture that never splits mid-character can never fail;
+- **CRLF split across reads** — a chunk ending in `\r` must not let the
+  `\n` arriving in the next chunk spawn a phantom empty line (double
+  dispatch). The discriminating fixture splits the `\r\n` inside a
+  MULTI-line `data:` event: at an event boundary, a phantom blank line is
+  masked by the legitimate dispatch that follows it;
+- **frames split across reads** — accumulate lines, dispatch only on the
+  blank line;
+- **incomplete event at EOF is discarded** (WHATWG rule) — half a JSON
+  payload must never reach `JSON.parse`.
+
+Abort is part of the money story, not just cleanup: the composable's
+latest-wins `AbortController` propagates fetch abort →
+`HttpContext.RequestAborted` → the provider call is cancelled and the agent
+ledger still bills tokens-to-date (docs/AGENT.md). Wire types for the part
+union are hand-written in `src/contracts/agent.ts` because the agent surface
+is `ExcludeFromDescription` — see the sync rule documented there.
+
 ## Bidirectional upgrade: SignalR
 
 When clients also send (chat, collaboration, presence), upgrade to SignalR

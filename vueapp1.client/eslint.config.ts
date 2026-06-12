@@ -71,9 +71,14 @@ export default defineConfigWithVueTs(
     files: ['src/**/*.{ts,mts,tsx,vue}'],
     // ReloadPrompt fetches sw.js for update checks — infrastructure, not API data.
     // useDownload streams blobs (useFetch is deliberately JSON-only).
+    // useAgentStream is the sanctioned POST-initiated SSE seam from
+    // docs/REALTIME.md: EventSource cannot POST a body and useFetch buffers
+    // one JSON body, so the agent stream needs raw fetch + ReadableStream —
+    // kept inside this ONE composable so the exception stays narrow.
     ignores: [
       'src/composables/useFetch.ts',
       'src/composables/useDownload.ts',
+      'src/composables/useAgentStream.ts',
       'src/components/ReloadPrompt.vue',
       'src/**/__tests__/**',
     ],
