@@ -262,8 +262,14 @@ public class SkillCatalogTests
         Assert.False(loadOutput.IsError);
 
         // ...but authorization did not move an inch: frozen, not executed.
-        Assert.Empty(executed);
+        // Parking is asserted FIRST so any future failure localizes
+        // immediately: a missing approval part means the call never reached
+        // the gate; a non-empty `executed` after the part was seen means the
+        // gate was bypassed. (A 2026-06-12 incident failed the execution
+        // assert against a stale VueApp1.Server.dll — see docs/TESTING.md
+        // "Impossible failures".)
         Assert.Single(parts.OfType<ToolApprovalRequiredPart>());
+        Assert.Empty(executed);
         Assert.Equal(AgentFinishReasons.ApprovalRequired, Assert.IsType<FinishPart>(parts[^1]).Reason);
         Assert.Single(harness.Store.GetPendingApprovals(ConversationId));
 

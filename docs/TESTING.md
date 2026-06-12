@@ -54,6 +54,20 @@ dumps on CI so hung tests can't stall runners silently.
 - Under any `--kill-others-on-fail` runner, one root failure makes siblings
   report collateral kills (`MSB4166` on the .NET side, `code=null` on Node).
   Chase the FIRST failure; never debug the collateral ones.
+- **Impossible failures** (the assertion contradicts what current source can
+  produce — e.g. a value only reachable through a branch that provably parks
+  first): suspect stale build outputs before suspecting a race. The
+  signature: the failure repeats while one project's DLL stays untouched,
+  then heals permanently the moment that DLL's mtime changes. Diagnose with
+  `stat` on the involved `bin/` DLLs vs the failing-run timestamps in
+  `test-results/logs/`; the cure is `npm run build-server-shutdown` + clean
+  rebuild + a soak (e.g. 200× `dotnet exec <UnitTests>.dll`), per the
+  stale-build-server note in AGENTS.md. Incident pinned to this doctrine:
+  the never-widen lock in `SkillCatalogTests` "failed" twice on 2026-06-12
+  (once in an isolated single-test run) in ways current source cannot
+  produce; `VueApp1.Server.dll` was rebuilt in the 32-second window between
+  the last failure and the first pass, and every run since — including a
+  200-iteration post-clean-rebuild soak — has been green.
 
 ## Helpers
 
