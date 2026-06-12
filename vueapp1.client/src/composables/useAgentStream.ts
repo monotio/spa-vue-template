@@ -1,5 +1,6 @@
 import { computed, ref, onScopeDispose } from 'vue';
 import {
+  AGENT_ATTACHMENT_LIMITS,
   AGENT_PROBLEM_TYPES,
   isAgentProblemType,
   isAgentStreamPart,
@@ -166,7 +167,18 @@ export interface AgentToolItem {
   resultJson?: string | undefined;
 }
 
-export type AgentChatItem = AgentTextItem | AgentReasoningItem | AgentToolItem;
+/**
+ * An attachment chip on a user message. Live sends create these locally from
+ * the picked files; replay rebuilds them from the snapshot's `file` parts —
+ * which carry REFERENCES (the server transcript never stores bytes).
+ */
+export interface AgentFileItem {
+  kind: 'file';
+  fileName: string;
+  mediaType: string;
+}
+
+export type AgentChatItem = AgentTextItem | AgentReasoningItem | AgentToolItem | AgentFileItem;
 
 export type AgentChatRole = 'user' | 'assistant';
 
@@ -354,6 +366,15 @@ export function applyAgentPart(
       }
       break;
     }
+    case 'file':
+      // Replay-only in practice (the live composer renders its own uploads);
+      // reduced here so snapshot and live share one renderer regardless.
+      ensureBucket(messages, role).items.push({
+        kind: 'file',
+        fileName: part.fileName,
+        mediaType: part.mediaType,
+      });
+      break;
     case 'usage':
     case 'error':
     case 'finish':
@@ -442,7 +463,7 @@ export function useAgentStream() {
   function closeAllStreamingItems(): void {
     for (const message of messages.value) {
       for (const item of message.items) {
-        if (item.kind !== 'tool' && item.streaming) {
+        if ((item.kind === 'text' || item.kind === 'reasoning') && item.streaming) {
           item.streaming = false;
         }
       }
@@ -615,7 +636,7 @@ export function useAgentStream() {
     return { failedBeforeFirstPart: false };
   }
 
-  async function sendMessage(text: string): Promise<void> {
+  async function sendMessage(text: string, files: readonly File[] = []): Promise<void> {
     const message = text.trim();
     if (message === '' || agentDisabled.value) {
       return;
@@ -629,24 +650,52 @@ export function useAgentStream() {
       // first — the page's composer mirrors this rule.
       return;
     }
+    if (files.length > AGENT_ATTACHMENT_LIMITS.maxPerMessage) {
+      // The page validates at pick time; this mirrors the server cap for
+      // any other caller instead of letting the POST 400 after uploading.
+      errorMessage.value = `At most ${AGENT_ATTACHMENT_LIMITS.maxPerMessage} attachments per message.`;
+      status.value = 'error';
+      return;
+    }
     const id = ensureConversationId();
     messages.value.push({
       role: 'user',
-      items: [{ kind: 'text', text: message, streaming: false }],
+      items: [
+        { kind: 'text', text: message, streaming: false },
+        ...files.map(
+          (file): AgentFileItem => ({
+            kind: 'file',
+            fileName: file.name,
+            mediaType: file.type === '' ? 'application/octet-stream' : file.type,
+          }),
+        ),
+      ],
     });
     errorMessage.value = undefined;
     lastFinishReason.value = undefined;
     status.value = 'streaming';
-    const request: AgentTurnRequest = { message };
-    await runStream(id, (signal) =>
-      fetch(`/api/agent/conversations/${id}/turns`, {
+    await runStream(id, async (signal) => {
+      // Upload-then-reference, under the SAME abort controller as the
+      // stream: bytes go to /attachments first; the JSON turn body carries
+      // only the returned ids. An upload failure (413/415 ProblemDetails,
+      // offline) aborts the send before any billable turn starts.
+      const attachmentIds: string[] = [];
+      for (const file of files) {
+        const uploaded = await api.uploadAttachment(file, signal);
+        attachmentIds.push(uploaded.attachmentId);
+      }
+      const request: AgentTurnRequest = {
+        message,
+        ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+      };
+      return fetch(`/api/agent/conversations/${id}/turns`, {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
         body: JSON.stringify(request),
         signal,
-      }),
-    );
+      });
+    });
   }
 
   async function respondToApproval(

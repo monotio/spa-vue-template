@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using ModelContextProtocol.Server;
 using VueApp1.Server.Agent;
+using VueApp1.Server.Agent.Attachments;
 using VueApp1.Server.Agent.Skills;
 using VueApp1.Server.Mcp;
 using Xunit;
@@ -488,8 +489,10 @@ public class SkillCatalogTests
             var adapter = new McpToolAdapter(_provider, NullLoggerFactory.Instance);
             Policy = new AgentToolPolicy(tools, adapter, wrapped);
             Ledger = new AgentUsageLedger(wrapped, TimeProvider.System);
+            var messageBuilder = new AgentMessageBuilder(
+                new InMemoryAttachmentStore(wrapped), wrapped, NullLogger<AgentMessageBuilder>.Instance);
             Loop = new AgentLoopService(
-                Client, Policy, catalog, Store, Ledger, wrapped, _provider,
+                Client, Policy, catalog, Store, Ledger, messageBuilder, wrapped, _provider,
                 NullLogger<AgentLoopService>.Instance);
         }
 
@@ -506,7 +509,7 @@ public class SkillCatalogTests
         public IAsyncEnumerable<AgentStreamPart> StartTurn(string message)
         {
             var start = Loop.TryStartTurn(
-                ConversationId, new AgentTurnRequest(message), user: null,
+                ConversationId, new AgentTurnRequest(message), attachments: [], user: null,
                 TestContext.Current.CancellationToken);
             Assert.Equal(AgentTurnStartStatus.Started, start.Status);
             return start.Stream!;

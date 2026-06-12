@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using VueApp1.Server.Agent;
+using VueApp1.Server.Agent.Attachments;
 using VueApp1.Server.Agent.Skills;
 using VueApp1.Server.Mcp;
 using Xunit;
@@ -177,9 +178,11 @@ public class AgentLoopServiceTests
         harness.Client.Enqueue(FakeChatClient.Text("hi"));
 
         var first = harness.Loop.TryStartTurn(
-            ConversationId, new AgentTurnRequest("one"), user: null, TestContext.Current.CancellationToken);
+            ConversationId, new AgentTurnRequest("one"), attachments: [], user: null,
+            TestContext.Current.CancellationToken);
         var second = harness.Loop.TryStartTurn(
-            ConversationId, new AgentTurnRequest("two"), user: null, TestContext.Current.CancellationToken);
+            ConversationId, new AgentTurnRequest("two"), attachments: [], user: null,
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(AgentTurnStartStatus.Started, first.Status);
         Assert.Equal(AgentTurnStartStatus.TurnInProgress, second.Status);
@@ -324,7 +327,8 @@ public class AgentLoopServiceTests
         harness.Client.Enqueue(FakeChatClient.Text("hi"));
 
         var start = harness.Loop.TryStartTurn(
-            ConversationId, new AgentTurnRequest("one"), user: null, TestContext.Current.CancellationToken);
+            ConversationId, new AgentTurnRequest("one"), attachments: [], user: null,
+            TestContext.Current.CancellationToken);
         await DrainAsync(start.Stream!);
 
         // A second enumeration would re-run the whole turn WITHOUT the
@@ -521,8 +525,10 @@ public class AgentLoopServiceTests
             // SkillCatalogTests with a populated catalog.
             var skills = new FileSystemSkillCatalog(
                 Path.Combine(Path.GetTempPath(), "vueapp1-no-skills", Guid.NewGuid().ToString("N")));
+            var messageBuilder = new AgentMessageBuilder(
+                new InMemoryAttachmentStore(wrapped), wrapped, NullLogger<AgentMessageBuilder>.Instance);
             Loop = new AgentLoopService(
-                Client, Policy, skills, Store, Ledger, wrapped, _provider,
+                Client, Policy, skills, Store, Ledger, messageBuilder, wrapped, _provider,
                 NullLogger<AgentLoopService>.Instance);
         }
 
@@ -539,7 +545,7 @@ public class AgentLoopServiceTests
         public IAsyncEnumerable<AgentStreamPart> StartTurn(string message, CancellationToken cancellationToken)
         {
             var start = Loop.TryStartTurn(
-                ConversationId, new AgentTurnRequest(message), user: null, cancellationToken);
+                ConversationId, new AgentTurnRequest(message), attachments: [], user: null, cancellationToken);
             Assert.Equal(AgentTurnStartStatus.Started, start.Status);
             return start.Stream!;
         }

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text;
@@ -10,6 +11,7 @@ using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Server;
 using VueApp1.Server.Agent;
+using VueApp1.Server.Agent.Attachments;
 using VueApp1.Server.Agent.Skills;
 using VueApp1.Server.IntegrationTests.Infrastructure;
 using VueApp1.Server.Mcp;
@@ -652,6 +654,174 @@ public class AgentEndpointTests(IntegrationTestWebApplicationFactory factory)
         Assert.Equal(ChatRole.System, resumed[0].Role);
     }
 
+    // -- Attachments: upload, hydrate-on-replay, degradation ----------------------
+
+    /// <summary>
+    /// THE attachment proving test (spec-mandated): the multimodal parts must
+    /// be rebuilt from the store on EVERY turn — a loop that hydrates only
+    /// the freshly typed message passes turn 1 and silently sends a text-only
+    /// transcript from turn 2 on. The SECOND provider call is therefore the
+    /// assertion target.
+    /// </summary>
+    [Fact]
+    public async Task Attachments_HydrateOnReplay_SecondTurnStillSeesDataContentRebuiltFromTheStore()
+    {
+        var chatClient = new FakeChatClient()
+            .Enqueue(FakeChatClient.Text("I see a PNG."))
+            .Enqueue(FakeChatClient.Text("Still looking at it."));
+        using var agentFactory = CreateAgentFactory(chatClient);
+        using var httpClient = agentFactory.CreateClient();
+        using var cts = CreateRequestCts();
+
+        byte[] pngBytes = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3];
+        var attachmentId = await UploadAttachmentAsync(httpClient, "pic.png", "image/png", pngBytes, cts.Token);
+
+        // Turn 1 references the upload; turn 2 carries NO new attachments.
+        using var first = await httpClient.PostAsJsonAsync(
+            "/api/agent/conversations/conv-attach/turns",
+            new AgentTurnRequest("what is this image?", [attachmentId]), cts.Token);
+        await ReadSsePartsAsync(first, cts.Token);
+        using var second = await httpClient.PostAsJsonAsync(
+            "/api/agent/conversations/conv-attach/turns",
+            new AgentTurnRequest("and now?"), cts.Token);
+        await ReadSsePartsAsync(second, cts.Token);
+
+        // Turn 1 (sanity): the fresh message reached the provider hydrated.
+        var firstCallUser = chatClient.Calls[0].Messages.Single(m => m.Role == ChatRole.User);
+        Assert.Single(firstCallUser.Contents.OfType<DataContent>());
+
+        // Turn 2 (the pin): the REPLAYED first user message carries
+        // DataContent rebuilt from the store — hydrate-on-replay, not
+        // first-turn-only. Bytes and media type are byte-identical.
+        Assert.Equal(2, chatClient.Calls.Count);
+        var replayedUser = chatClient.Calls[1].Messages.First(m => m.Role == ChatRole.User);
+        var data = Assert.Single(replayedUser.Contents.OfType<DataContent>());
+        Assert.Equal("image/png", data.MediaType);
+        Assert.Equal(pngBytes, data.Data.ToArray());
+        // The typed text rides beside the rebuilt bytes, unchanged.
+        Assert.Contains(
+            replayedUser.Contents.OfType<TextContent>(),
+            text => text.Text == "what is this image?");
+
+        // P1: the STORED transcript itself holds references only — never bytes.
+        var store = agentFactory.Services.GetRequiredService<IAgentConversationStore>();
+        Assert.DoesNotContain(
+            store.GetMessages("conv-attach").SelectMany(message => message.Contents),
+            content => content is DataContent);
+
+        // The replay snapshot derives a `file` chip part from the same reference.
+        var replay = await httpClient.GetAsync("/api/agent/conversations/conv-attach", cts.Token);
+        using var snapshot = JsonDocument.Parse(await replay.Content.ReadAsStringAsync(cts.Token));
+        var filePart = snapshot.RootElement.GetProperty("messages").EnumerateArray()
+            .SelectMany(message => message.GetProperty("parts").EnumerateArray())
+            .Single(part => part.GetProperty("type").GetString() == "file");
+        Assert.Equal("pic.png", filePart.GetProperty("fileName").GetString());
+        Assert.Equal(attachmentId, filePart.GetProperty("attachmentId").GetString());
+    }
+
+    [Fact]
+    public async Task Attachments_UploadLimits_AnswerWithTypedProblemDetails()
+    {
+        var chatClient = new FakeChatClient();
+        using var agentFactory = CreateAgentFactory(chatClient, builder =>
+            builder.UseSetting("Agent:Attachments:MaxBytes", "16"));
+        using var httpClient = agentFactory.CreateClient();
+        using var cts = CreateRequestCts();
+
+        // Oversized → 413 with the stable type.
+        using var oversized = await PostAttachmentAsync(
+            httpClient, "big.png", "image/png", new byte[32], cts.Token);
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, oversized.StatusCode);
+        var tooLarge = await ReadProblemAsync(oversized, cts.Token);
+        Assert.Equal("/problems/agent-attachment-too-large", tooLarge.GetProperty("type").GetString());
+
+        // Disallowed media type → 415 with the stable type, naming the allowlist.
+        using var badType = await PostAttachmentAsync(
+            httpClient, "tool.zip", "application/zip", [1, 2, 3], cts.Token);
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, badType.StatusCode);
+        var notAllowed = await ReadProblemAsync(badType, cts.Token);
+        Assert.Equal(
+            "/problems/agent-attachment-type-not-allowed", notAllowed.GetProperty("type").GetString());
+        Assert.Contains(
+            "image/png", notAllowed.GetProperty("detail").GetString(), StringComparison.Ordinal);
+
+        // Under every cap → 200 with the reference triple.
+        using var accepted = await PostAttachmentAsync(
+            httpClient, "ok.png", "image/png", [1, 2, 3], cts.Token);
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+        using var payload = JsonDocument.Parse(await accepted.Content.ReadAsStringAsync(cts.Token));
+        Assert.False(string.IsNullOrEmpty(payload.RootElement.GetProperty("attachmentId").GetString()));
+        Assert.Equal("image/png", payload.RootElement.GetProperty("mediaType").GetString());
+        Assert.Equal("ok.png", payload.RootElement.GetProperty("fileName").GetString());
+    }
+
+    [Fact]
+    public async Task Attachments_TurnReferencingTooManyOrUnknownIds_Is400BeforeAnyProviderCall()
+    {
+        var chatClient = new FakeChatClient();
+        using var agentFactory = CreateAgentFactory(chatClient, builder =>
+            builder.UseSetting("Agent:Attachments:MaxPerMessage", "1"));
+        using var httpClient = agentFactory.CreateClient();
+        using var cts = CreateRequestCts();
+
+        var first = await UploadAttachmentAsync(httpClient, "a.png", "image/png", [1], cts.Token);
+        var second = await UploadAttachmentAsync(httpClient, "b.png", "image/png", [2], cts.Token);
+
+        using var tooMany = await httpClient.PostAsJsonAsync(
+            "/api/agent/conversations/conv-att-caps/turns",
+            new AgentTurnRequest("both please", [first, second]), cts.Token);
+        Assert.Equal(HttpStatusCode.BadRequest, tooMany.StatusCode);
+        var problem = await ReadProblemAsync(tooMany, cts.Token);
+        Assert.Equal("/problems/validation-failed", problem.GetProperty("type").GetString());
+        Assert.Contains(
+            "MaxPerMessage", problem.GetProperty("detail").GetString(), StringComparison.Ordinal);
+
+        using var unknown = await httpClient.PostAsJsonAsync(
+            "/api/agent/conversations/conv-att-caps/turns",
+            new AgentTurnRequest("ghost file", ["does-not-exist"]), cts.Token);
+        Assert.Equal(HttpStatusCode.BadRequest, unknown.StatusCode);
+
+        // Neither rejected request may have started a billable turn.
+        Assert.Empty(chatClient.Calls);
+    }
+
+    [Fact]
+    public async Task Attachments_StoreFailureOnReplay_DegradesToPlaceholder_TurnStillCompletes()
+    {
+        var chatClient = new FakeChatClient()
+            .Enqueue(FakeChatClient.Text("Nice PNG."))
+            .Enqueue(FakeChatClient.Text("It seems the file is gone, but here is my answer."));
+        var breakableStore = new BreakableAttachmentStore();
+        using var agentFactory = CreateAgentFactory(chatClient, builder =>
+            builder.ConfigureServices(services => services.AddSingleton<IAttachmentStore>(breakableStore)));
+        using var httpClient = agentFactory.CreateClient();
+        using var cts = CreateRequestCts();
+
+        var attachmentId = await UploadAttachmentAsync(
+            httpClient, "pic.png", "image/png", [9, 9, 9], cts.Token);
+        using var first = await httpClient.PostAsJsonAsync(
+            "/api/agent/conversations/conv-att-degrade/turns",
+            new AgentTurnRequest("look", [attachmentId]), cts.Token);
+        await ReadSsePartsAsync(first, cts.Token);
+
+        // The store starts failing BETWEEN requests (restart, outage,
+        // eviction): the next turn must degrade the attachment, not abort.
+        breakableStore.Broken = true;
+        using var second = await httpClient.PostAsJsonAsync(
+            "/api/agent/conversations/conv-att-degrade/turns",
+            new AgentTurnRequest("still there?"), cts.Token);
+        var parts = await ReadSsePartsAsync(second, cts.Token);
+
+        Assert.Equal("stop", parts[^1].GetProperty("reason").GetString());
+        Assert.DoesNotContain(parts, part => part.GetProperty("type").GetString() == "error");
+        var replayedUser = chatClient.Calls[1].Messages.First(m => m.Role == ChatRole.User);
+        Assert.DoesNotContain(replayedUser.Contents, content => content is DataContent);
+        Assert.Contains(
+            replayedUser.Contents.OfType<TextContent>(),
+            text => text.Text.StartsWith("[Attachment unavailable", StringComparison.Ordinal)
+                && text.Text.Contains("pic.png", StringComparison.Ordinal));
+    }
+
     // -- Detached turns + replay + usage -----------------------------------------
 
     [Fact]
@@ -755,6 +925,52 @@ public class AgentEndpointTests(IntegrationTestWebApplicationFactory factory)
     }
 
     // -- Helpers -----------------------------------------------------------------
+
+    private static async Task<HttpResponseMessage> PostAttachmentAsync(
+        HttpClient httpClient, string fileName, string mediaType, byte[] bytes, CancellationToken cancellationToken)
+    {
+        using var form = new MultipartFormDataContent();
+        using var fileContent = new ByteArrayContent(bytes);
+        fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(mediaType);
+        form.Add(fileContent, "file", fileName);
+        return await httpClient.PostAsync(new Uri("/api/agent/attachments", UriKind.Relative), form, cancellationToken);
+    }
+
+    private static async Task<string> UploadAttachmentAsync(
+        HttpClient httpClient, string fileName, string mediaType, byte[] bytes, CancellationToken cancellationToken)
+    {
+        using var response = await PostAttachmentAsync(httpClient, fileName, mediaType, bytes, cancellationToken);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var payload = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        return payload.RootElement.GetProperty("attachmentId").GetString()!;
+    }
+
+    /// <summary>
+    /// A store that can start failing BETWEEN requests — the transient-outage
+    /// shape the placeholder degradation exists for.
+    /// </summary>
+    private sealed class BreakableAttachmentStore : IAttachmentStore
+    {
+        private readonly ConcurrentDictionary<string, StoredAgentAttachment> _attachments =
+            new(StringComparer.Ordinal);
+
+        public volatile bool Broken;
+
+        public Task<AgentAttachmentRef> SaveAsync(
+            string fileName, string mediaType, ReadOnlyMemory<byte> data, CancellationToken cancellationToken)
+        {
+            var id = Guid.NewGuid().ToString("N");
+            _attachments[id] = new StoredAgentAttachment(id, fileName, mediaType, data.ToArray());
+            return Task.FromResult(new AgentAttachmentRef(id, fileName, mediaType));
+        }
+
+        public Task<StoredAgentAttachment?> GetAsync(string attachmentId, CancellationToken cancellationToken) =>
+            Broken
+                ? throw new InvalidOperationException("attachment store outage (test)")
+                : Task.FromResult(_attachments.GetValueOrDefault(attachmentId));
+
+        public bool Exists(string attachmentId) => !Broken && _attachments.ContainsKey(attachmentId);
+    }
 
     private static McpServerTool DestructiveTool(Action<string> onExecuted) =>
         McpServerTool.Create(

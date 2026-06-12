@@ -3,6 +3,7 @@ import {
   AGENT_STREAM_PART_TYPES,
   isAgentProblemType,
   isAgentStreamPart,
+  assertAgentAttachmentUploadResponse,
   assertAgentConversationSnapshot,
 } from '../agent';
 
@@ -27,6 +28,7 @@ const SERVER_SHAPED_FIXTURES: readonly string[] = [
   `{"type":"tool-input-available","toolCallId":"call-1","toolName":"get_weather_forecast","argumentsJson":"{}",${ID}}`,
   `{"type":"tool-output-available","toolCallId":"call-1","resultJson":"{\\"result\\":[]}","isError":false,${ID}}`,
   `{"type":"tool-approval-required","toolCallId":"call-2","toolName":"delete_item","argumentsJson":"{\\"id\\":7}",${ID}}`,
+  `{"type":"file","attachmentId":"att-1","fileName":"notes.txt","mediaType":"text/plain",${ID}}`,
   `{"type":"usage","inputTokens":100,"cachedInputTokens":40,"outputTokens":20,"reasoningTokens":5,"estimatedUsd":0.0123,${ID}}`,
   `{"type":"error","problem":{"title":"Boom","status":502,"detail":"It broke."},${ID}}`,
   `{"type":"finish","reason":"stop",${ID}}`,
@@ -84,8 +86,25 @@ describe('agent wire contract', () => {
       ),
     ).toBe(false);
     expect(isAgentStreamPart(JSON.parse(`{"type":"error","problem":{},${ID}}`))).toBe(false);
+    expect(isAgentStreamPart(JSON.parse(`{"type":"file","fileName":"notes.txt",${ID}}`))).toBe(
+      false,
+    );
     expect(isAgentStreamPart(null)).toBe(false);
     expect(isAgentStreamPart([])).toBe(false);
+  });
+
+  it('asserts the upload response triple and rejects non-conforming payloads', () => {
+    expect(() =>
+      assertAgentAttachmentUploadResponse({
+        attachmentId: 'att-1',
+        mediaType: 'image/png',
+        fileName: 'pic.png',
+      }),
+    ).not.toThrow();
+    expect(() => assertAgentAttachmentUploadResponse({ attachmentId: 'att-1' })).toThrow(
+      'API contract mismatch',
+    );
+    expect(() => assertAgentAttachmentUploadResponse(null)).toThrow('API contract mismatch');
   });
 
   it('classifies agent-owned ProblemDetails types', () => {

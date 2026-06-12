@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
+using VueApp1.Server.Agent.Attachments;
 using VueApp1.Server.Agent.Skills;
 using VueApp1.Server.Mcp;
 
@@ -32,6 +33,7 @@ public sealed partial class AgentLoopService(
     FileSystemSkillCatalog skillCatalog,
     IAgentConversationStore store,
     AgentUsageLedger ledger,
+    AgentMessageBuilder messageBuilder,
     IOptions<AgentOptions> options,
     IServiceProvider services,
     ILogger<AgentLoopService> logger)
@@ -69,6 +71,7 @@ public sealed partial class AgentLoopService(
     public AgentTurnStart TryStartTurn(
         string conversationId,
         AgentTurnRequest request,
+        IReadOnlyList<AgentAttachmentRef> attachments,
         ClaimsPrincipal? user,
         CancellationToken cancellationToken)
     {
@@ -89,10 +92,9 @@ public sealed partial class AgentLoopService(
         }
 
         var turnId = Guid.NewGuid();
-        var userMessage = new ChatMessage(ChatRole.User, request.Message)
-        {
-            AdditionalProperties = new() { [AgentUiParts.TurnStampKey] = turnId },
-        };
+        // Typed text stays clean; attachments ride as REFERENCES the loop
+        // re-hydrates from the store every request (AgentMessageBuilder).
+        var userMessage = AgentMessageBuilder.BuildUserMessage(request.Message, attachments, turnId);
         return new AgentTurnStart(
             AgentTurnStartStatus.Started,
             RunTurnsAsync(
@@ -193,10 +195,7 @@ public sealed partial class AgentLoopService(
         }
 
         var turnId = Guid.NewGuid();
-        var userMessage = new ChatMessage(ChatRole.User, prompt)
-        {
-            AdditionalProperties = new() { [AgentUiParts.TurnStampKey] = turnId },
-        };
+        var userMessage = AgentMessageBuilder.BuildUserMessage(prompt, [], turnId);
 
         var finishReason = AgentFinishReasons.Cancelled;
         var text = new StringBuilder();
@@ -242,12 +241,15 @@ public sealed partial class AgentLoopService(
         {
             var provider = agentOptions.Provider;
             var model = agentOptions.SelectedModel;
-            var messages = BuildRequestMessages(conversationId, provider);
+            var messages = await BuildRequestMessagesAsync(conversationId, provider, cancellationToken)
+                .ConfigureAwait(false);
 
             if (userMessage is not null)
             {
+                // The STORE keeps the refs-only message (P1: never bytes);
+                // the PROVIDER sees the hydrated clone.
                 store.AppendMessages(conversationId, [userMessage]);
-                messages.Add(userMessage);
+                messages.Add(await messageBuilder.HydrateAsync(userMessage, cancellationToken).ConfigureAwait(false));
             }
 
             if (approvalAction is not null)
@@ -796,14 +798,23 @@ public sealed partial class AgentLoopService(
         }
     }
 
-    private List<ChatMessage> BuildRequestMessages(string conversationId, string provider)
+    private async Task<List<ChatMessage>> BuildRequestMessagesAsync(
+        string conversationId, string provider, CancellationToken cancellationToken)
     {
         // Byte-stable prefix first (constant prompt + L0 skills catalog);
         // dynamic content only ever APPENDS.
         List<ChatMessage> messages = [AgentPrompts.CreateSystemMessage(skillCatalog.CatalogPromptBlock)];
         foreach (var message in store.GetMessages(conversationId))
         {
-            messages.Add(StripForeignReasoning(message, provider));
+            // HYDRATE-ON-REPLAY (P2): attachment parts are rebuilt from the
+            // store on EVERY request — the transcript holds references only,
+            // and nothing is provider-held. Skipping this for "already sent"
+            // messages is the silent first-turn-only bug: turn 1 works, turn
+            // 2 onward replays a text-only transcript (pinned by the
+            // second-turn integration test).
+            messages.Add(await messageBuilder
+                .HydrateAsync(StripForeignReasoning(message, provider), cancellationToken)
+                .ConfigureAwait(false));
         }
 
         return messages;

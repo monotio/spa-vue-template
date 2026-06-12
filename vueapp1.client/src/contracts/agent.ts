@@ -68,6 +68,19 @@ export interface AgentToolApprovalRequiredPart extends AgentStreamPartBase {
   readonly argumentsJson: string;
 }
 
+/**
+ * An attachment REFERENCE on a user message (AI-SDK vocabulary name: `file`).
+ * Replay-only: the live stream never emits it — the composer renders its own
+ * uploads locally; the GET snapshot derives these from the references stored
+ * on the message (never from bytes).
+ */
+export interface AgentFilePart extends AgentStreamPartBase {
+  readonly type: 'file';
+  readonly attachmentId: string;
+  readonly fileName: string;
+  readonly mediaType: string;
+}
+
 export interface AgentUsagePart extends AgentStreamPartBase {
   readonly type: 'usage';
   readonly inputTokens: number;
@@ -118,6 +131,7 @@ export type AgentStreamPart =
   | AgentToolInputAvailablePart
   | AgentToolOutputAvailablePart
   | AgentToolApprovalRequiredPart
+  | AgentFilePart
   | AgentUsagePart
   | AgentErrorPart
   | AgentFinishPart;
@@ -133,6 +147,7 @@ export const AGENT_STREAM_PART_TYPES = [
   'tool-input-available',
   'tool-output-available',
   'tool-approval-required',
+  'file',
   'usage',
   'error',
   'finish',
@@ -145,7 +160,36 @@ export type AgentStreamPartType = (typeof AGENT_STREAM_PART_TYPES)[number];
 
 export interface AgentTurnRequest {
   readonly message: string;
+  /** Ids from prior `POST /api/agent/attachments` uploads (upload-then-reference). */
+  readonly attachmentIds?: readonly string[] | undefined;
 }
+
+/** Response of the multipart upload endpoint. */
+export interface AgentAttachmentUploadResponse {
+  readonly attachmentId: string;
+  readonly mediaType: string;
+  readonly fileName: string;
+}
+
+/**
+ * Client-side mirror of the SERVER DEFAULTS in `Agent:Attachments`
+ * (appsettings.json). Mirrored for instant composer feedback; the server
+ * remains the authority — its typed ProblemDetails (413/415/400) surface
+ * through the normal error path when a deployment tightens the limits.
+ */
+export const AGENT_ATTACHMENT_LIMITS = {
+  maxBytes: 5_242_880,
+  maxPerMessage: 4,
+  allowedContentTypes: [
+    'image/png',
+    'image/jpeg',
+    'image/webp',
+    'image/gif',
+    'application/pdf',
+    'text/plain',
+    'text/markdown',
+  ],
+} as const;
 
 /** Mirrors the shape of MEAI's `ToolApprovalResponseContent` (`{approved, reason}`). */
 export interface AgentApprovalRequest {
@@ -173,6 +217,8 @@ export const AGENT_PROBLEM_TYPES = {
   approvalConflict: '/problems/agent-approval-conflict',
   approvalNotFound: '/problems/agent-approval-not-found',
   conversationNotFound: '/problems/agent-conversation-not-found',
+  attachmentTooLarge: '/problems/agent-attachment-too-large',
+  attachmentTypeNotAllowed: '/problems/agent-attachment-type-not-allowed',
 } as const;
 
 /**
@@ -233,6 +279,12 @@ export function isAgentStreamPart(value: unknown): value is AgentStreamPart {
         typeof value['resultJson'] === 'string' &&
         typeof value['isError'] === 'boolean'
       );
+    case 'file':
+      return (
+        typeof value['attachmentId'] === 'string' &&
+        typeof value['fileName'] === 'string' &&
+        typeof value['mediaType'] === 'string'
+      );
     case 'usage':
       return (
         typeof value['inputTokens'] === 'number' &&
@@ -254,6 +306,20 @@ export function isAgentStreamPart(value: unknown): value is AgentStreamPart {
       return typeof value['reason'] === 'string' && FINISH_REASON_SET.has(value['reason']);
     default:
       return false;
+  }
+}
+
+/** Loud assertion for the upload response — a malformed shape is a contract mismatch. */
+export function assertAgentAttachmentUploadResponse(
+  value: unknown,
+): asserts value is AgentAttachmentUploadResponse {
+  if (
+    !isObject(value) ||
+    typeof value['attachmentId'] !== 'string' ||
+    typeof value['mediaType'] !== 'string' ||
+    typeof value['fileName'] !== 'string'
+  ) {
+    throw new Error('API contract mismatch: expected an agent attachment upload response.');
   }
 }
 

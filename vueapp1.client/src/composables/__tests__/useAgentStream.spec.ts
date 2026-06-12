@@ -363,6 +363,131 @@ describe('useAgentStream', () => {
     });
   });
 
+  it('uploads attachments first, then references their ids in the turn POST', async () => {
+    // Upload-then-reference: bytes go to /attachments as multipart; the JSON
+    // turn body carries only the returned ids.
+    const turnHandles: FeedHandle[] = [];
+    const uploadBodies: FormData[] = [];
+    globalThis.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url === '/api/agent/attachments') {
+        uploadBodies.push(init?.body as FormData);
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              attachmentId: `att-${uploadBodies.length}`,
+              mediaType: 'image/png',
+              fileName: `f${uploadBodies.length}.png`,
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        );
+      }
+      const feed = createSseFeed();
+      init?.signal?.addEventListener('abort', () =>
+        feed.error(new DOMException('The operation was aborted.', 'AbortError')),
+      );
+      turnHandles.push({ feed, request: { url, init } });
+      return Promise.resolve(
+        new Response(feed.stream, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        }),
+      );
+    });
+    const agent = setupAgent();
+    const fileA = new File(['a'], 'a.png', { type: 'image/png' });
+    const fileB = new File(['b'], 'b.png', { type: 'image/png' });
+
+    const send = agent.sendMessage('see these', [fileA, fileB]);
+    await tick();
+
+    expect(uploadBodies).toHaveLength(2);
+    expect(uploadBodies[0]).toBeInstanceOf(FormData);
+    expect((uploadBodies[0].get('file') as File).name).toBe('a.png');
+    const handle = turnHandles[0];
+    expect(handle.request.url).toBe(`/api/agent/conversations/${CONVERSATION_ID}/turns`);
+    expect(handle.request.init?.body).toBe(
+      JSON.stringify({ message: 'see these', attachmentIds: ['att-1', 'att-2'] }),
+    );
+
+    // The local user message carries the chips the transcript renders.
+    expect(agent.messages.value[0]).toEqual({
+      role: 'user',
+      items: [
+        { kind: 'text', text: 'see these', streaming: false },
+        { kind: 'file', fileName: 'a.png', mediaType: 'image/png' },
+        { kind: 'file', fileName: 'b.png', mediaType: 'image/png' },
+      ],
+    });
+
+    handle.feed.push(frame(part({ type: 'finish', reason: 'stop' })));
+    handle.feed.close();
+    await send;
+    expect(agent.status.value).toBe('idle');
+  });
+
+  it('a failed upload surfaces the ProblemDetails and never starts a billable turn', async () => {
+    const urls: string[] = [];
+    globalThis.fetch = vi.fn((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      urls.push(url);
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            type: '/problems/agent-attachment-too-large',
+            title: 'Attachment too large',
+            status: 413,
+          }),
+          { status: 413, headers: { 'Content-Type': 'application/problem+json' } },
+        ),
+      );
+    });
+    const agent = setupAgent();
+
+    await agent.sendMessage('here', [new File(['x'], 'big.png', { type: 'image/png' })]);
+
+    expect(agent.status.value).toBe('error');
+    expect(agent.errorMessage.value).toContain('Attachment too large');
+    // The turn POST never happened — the upload failure stopped the send.
+    expect(urls).toEqual(['/api/agent/attachments']);
+  });
+
+  it('refuses more than maxPerMessage attachments before uploading anything', async () => {
+    const fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy;
+    const agent = setupAgent();
+    const files = Array.from(
+      { length: 5 },
+      (_, index) => new File(['x'], `f${index}.png`, { type: 'image/png' }),
+    );
+
+    await agent.sendMessage('too many', files);
+
+    expect(agent.status.value).toBe('error');
+    expect(agent.errorMessage.value).toContain('At most 4');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('reduces replayed file parts into attachment chips', () => {
+    const messages: AgentChatMessage[] = [];
+
+    applyAgentPart(
+      messages,
+      part({
+        type: 'file',
+        attachmentId: 'att-1',
+        fileName: 'pic.png',
+        mediaType: 'image/png',
+      }) as unknown as AgentStreamPart,
+      'user',
+    );
+
+    expect(messages).toEqual([
+      { role: 'user', items: [{ kind: 'file', fileName: 'pic.png', mediaType: 'image/png' }] },
+    ]);
+  });
+
   it('drops parts from another conversation (dead-run guard)', async () => {
     const handles = mockSseFetch();
     const agent = setupAgent();

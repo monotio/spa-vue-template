@@ -64,4 +64,35 @@ public class AgentOptionsValidatorTests
                 failure => failure.Contains("IChatClient", StringComparison.Ordinal));
         }
     }
+
+    [Fact]
+    public void AttachmentLimits_InvalidValues_FailWithTheConfigKeys()
+    {
+        var validator = BuildValidator([], out var provider);
+        using (provider)
+        {
+            var options = new AgentOptions
+            {
+                Attachments = new AgentAttachmentOptions
+                {
+                    MaxBytes = 0,
+                    MaxPerMessage = 0,
+                    AllowedContentTypes = ["image/png", "not-a-media-type"],
+                },
+            };
+
+            var result = validator.Validate(name: null, options);
+
+            Assert.True(result.Failed);
+            Assert.Contains(
+                result.Failures!,
+                failure => failure.Contains("Agent:Attachments:MaxBytes", StringComparison.Ordinal));
+            Assert.Contains(
+                result.Failures!,
+                failure => failure.Contains("Agent:Attachments:MaxPerMessage", StringComparison.Ordinal));
+            Assert.Contains(
+                result.Failures!,
+                failure => failure.Contains("'not-a-media-type'", StringComparison.Ordinal));
+        }
+    }
 }

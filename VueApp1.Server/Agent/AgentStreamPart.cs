@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
+using VueApp1.Server.Agent.Attachments;
 
 namespace VueApp1.Server.Agent;
 
@@ -25,6 +26,7 @@ namespace VueApp1.Server.Agent;
 [JsonDerivedType(typeof(ToolInputAvailablePart), "tool-input-available")]
 [JsonDerivedType(typeof(ToolOutputAvailablePart), "tool-output-available")]
 [JsonDerivedType(typeof(ToolApprovalRequiredPart), "tool-approval-required")]
+[JsonDerivedType(typeof(FilePart), "file")]
 [JsonDerivedType(typeof(UsagePart), "usage")]
 [JsonDerivedType(typeof(ErrorPart), "error")]
 [JsonDerivedType(typeof(FinishPart), "finish")]
@@ -72,6 +74,19 @@ public sealed record ToolApprovalRequiredPart : AgentStreamPart
     public required string ToolCallId { get; init; }
     public required string ToolName { get; init; }
     public required string ArgumentsJson { get; init; }
+}
+
+/// <summary>
+/// An attachment REFERENCE on a user message (AI-SDK vocabulary name:
+/// <c>file</c>). Replay-only today: the live stream never emits it because
+/// the client renders its own uploads locally; the GET snapshot derives it
+/// from the refs stamped on the stored message — never from bytes.
+/// </summary>
+public sealed record FilePart : AgentStreamPart
+{
+    public required string AttachmentId { get; init; }
+    public required string FileName { get; init; }
+    public required string MediaType { get; init; }
 }
 
 public sealed record UsagePart : AgentStreamPart
@@ -128,7 +143,16 @@ public static class AgentFinishReasons
 // Request/response DTOs for the agent endpoints (all ExcludeFromDescription —
 // this surface never enters the committed OpenAPI contract).
 
-public sealed record AgentTurnRequest(string Message);
+/// <summary>
+/// <paramref name="AttachmentIds"/> reference prior uploads to
+/// <c>POST /api/agent/attachments</c> (upload-then-reference; the JSON turn
+/// body never carries bytes). Count/existence are validated before the turn
+/// starts.
+/// </summary>
+public sealed record AgentTurnRequest(string Message, IReadOnlyList<string>? AttachmentIds = null);
+
+/// <summary>Response of the multipart upload endpoint.</summary>
+public sealed record AgentAttachmentUploadResponse(string AttachmentId, string MediaType, string FileName);
 
 /// <summary>
 /// Mirrors the shape of MEAI's <c>ToolApprovalResponseContent</c>
@@ -165,6 +189,13 @@ public static class AgentUiParts
 
     /// <summary>Stamp key marking a tool-result content as the error envelope.</summary>
     public const string ToolErrorStampKey = "agent.isError";
+
+    /// <summary>
+    /// Stamp key carrying a user message's attachment REFERENCES
+    /// (<see cref="AgentAttachmentRef"/> list) — app-level state in
+    /// AdditionalProperties, never bytes, never provider file ids (P1).
+    /// </summary>
+    public const string AttachmentsStampKey = "agent.attachments";
 
     public static AgentMessageSnapshot ToSnapshot(ChatMessage message, string conversationId)
     {
@@ -232,6 +263,25 @@ public static class AgentUiParts
                     break;
             }
         }
+
+        // Attachment chips derive from the REFERENCES stamped on the stored
+        // message — the snapshot never touches the blob store, and a message
+        // whose bytes were evicted still replays its chips.
+        if (message.AdditionalProperties?.TryGetValue(AttachmentsStampKey, out var stamped) == true
+            && stamped is IReadOnlyList<AgentAttachmentRef> refs)
+        {
+            foreach (var reference in refs)
+            {
+                yield return new FilePart
+                {
+                    ConversationId = conversationId,
+                    TurnId = turnId,
+                    AttachmentId = reference.AttachmentId,
+                    FileName = reference.FileName,
+                    MediaType = reference.MediaType,
+                };
+            }
+        }
     }
 
     public static ToolInputAvailablePart ToolInput(FunctionCallContent call, string conversationId, Guid turnId)
@@ -281,4 +331,5 @@ public static class AgentUiParts
 [JsonSerializable(typeof(AgentApprovalRequest))]
 [JsonSerializable(typeof(AgentConversationSnapshot))]
 [JsonSerializable(typeof(AgentUsageSummary))]
+[JsonSerializable(typeof(AgentAttachmentUploadResponse))]
 public sealed partial class AgentJsonContext : JsonSerializerContext;

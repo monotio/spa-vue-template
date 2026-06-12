@@ -51,6 +51,26 @@ describe('useFetch', () => {
     expect(result).toEqual(data);
   });
 
+  it('posts FormData without a manual Content-Type (the browser owns the multipart boundary)', async () => {
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(new Response(JSON.stringify({ attachmentId: 'att-1' }), { status: 200 })),
+    );
+
+    const { postForm, isSending } = useFetch();
+    const form = new FormData();
+    form.append('file', new File(['x'], 'pic.png', { type: 'image/png' }));
+
+    const result = await postForm<{ attachmentId: string }>('/api/agent/attachments', form);
+
+    expect(result).toEqual({ attachmentId: 'att-1' });
+    expect(isSending.value).toBe(false);
+    const init = vi.mocked(globalThis.fetch).mock.calls[0][1];
+    expect(init?.body).toBe(form);
+    // No headers at all: a hand-set Content-Type would lack the boundary
+    // parameter and produce an unparseable multipart body.
+    expect(init?.headers).toBeUndefined();
+  });
+
   it('throws ProblemError for 400 with Problem Details body', async () => {
     const problem = { status: 400, title: 'Validation failed', detail: 'Name is required' };
     globalThis.fetch = vi.fn(() =>

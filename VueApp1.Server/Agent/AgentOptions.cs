@@ -51,6 +51,9 @@ public sealed class AgentOptions
     /// </summary>
     public bool RequireApprovalForWrites { get; init; } = true;
 
+    /// <summary>Upload caps for <c>POST /api/agent/attachments</c> (docs/AGENT.md "Attachments").</summary>
+    public AgentAttachmentOptions Attachments { get; init; } = new();
+
     /// <summary>The model name for the configured provider (ledger attribution).</summary>
     public string SelectedModel =>
         string.Equals(Provider, "openai", StringComparison.OrdinalIgnoreCase)
@@ -61,6 +64,60 @@ public sealed class AgentOptions
 public sealed class AgentProviderModelOptions
 {
     public string Model { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Attachment limits, enforced twice on purpose: at the upload endpoint
+/// (typed ProblemDetails the composer mirrors client-side) and again inside
+/// <see cref="Attachments.InMemoryAttachmentStore"/> (defense in depth — a
+/// future caller cannot route around the endpoint checks).
+/// </summary>
+public sealed class AgentAttachmentOptions
+{
+    /// <summary>Per-attachment byte cap (default 5 MiB) — 413 above it.</summary>
+    public long MaxBytes { get; init; } = 5 * 1024 * 1024;
+
+    /// <summary>Max attachment references on one user message — 400 above it.</summary>
+    public int MaxPerMessage { get; init; } = 4;
+
+    /// <summary>
+    /// Media-type allowlist — 415 outside it. Images and PDFs hydrate as
+    /// <c>DataContent</c>; <c>text/*</c> inlines under the boundary-nonce
+    /// frame (see <see cref="AgentMessageBuilder"/>). NOTE: the binder MERGES
+    /// configured entries with these code defaults (the classic collection
+    /// gotcha) — harmless here because matching dedupes through a set.
+    /// </summary>
+    public IReadOnlyList<string> AllowedContentTypes { get; init; } =
+        ["image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf", "text/plain", "text/markdown"];
+
+    private HashSet<string>? _allowedSet;
+
+    public bool IsAllowedContentType(string? contentType)
+    {
+        // Benign race: concurrent first calls build identical sets.
+        var allowed = _allowedSet ??= [.. AllowedContentTypes
+            .Select(NormalizeMediaType)
+            .OfType<string>()];
+        return NormalizeMediaType(contentType) is { } normalized && allowed.Contains(normalized);
+    }
+
+    /// <summary>
+    /// Canonical media type: parameters stripped (<c>text/plain; charset=utf-8</c>
+    /// → <c>text/plain</c>), trimmed, lowercased. Null when unusable.
+    /// </summary>
+    public static string? NormalizeMediaType(string? contentType)
+    {
+        if (string.IsNullOrWhiteSpace(contentType))
+        {
+            return null;
+        }
+
+        var separatorIndex = contentType.IndexOf(';', StringComparison.Ordinal);
+        var value = (separatorIndex >= 0 ? contentType[..separatorIndex] : contentType).Trim();
+        return value.Length == 0 || !value.Contains('/', StringComparison.Ordinal)
+            ? null
+            : value.ToLowerInvariant();
+    }
 }
 
 public sealed class AgentModelPricing
@@ -120,6 +177,26 @@ public sealed class AgentOptionsValidator(IServiceProvider serviceProvider) : IV
             if (pricing.InputPerMTokUsd < 0 || pricing.CachedInputPerMTokUsd < 0 || pricing.OutputPerMTokUsd < 0)
             {
                 failures.Add($"Agent:Pricing:{model} rates must be non-negative.");
+            }
+        }
+
+        if (options.Attachments.MaxBytes < 1)
+        {
+            failures.Add("Agent:Attachments:MaxBytes must be at least 1.");
+        }
+
+        if (options.Attachments.MaxPerMessage < 1)
+        {
+            failures.Add("Agent:Attachments:MaxPerMessage must be at least 1.");
+        }
+
+        foreach (var contentType in options.Attachments.AllowedContentTypes)
+        {
+            if (AgentAttachmentOptions.NormalizeMediaType(contentType) is null)
+            {
+                failures.Add(
+                    $"Agent:Attachments:AllowedContentTypes entry '{contentType}' is not a media type "
+                    + "(expected type/subtype, e.g. image/png).");
             }
         }
 

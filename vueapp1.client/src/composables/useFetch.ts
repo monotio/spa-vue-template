@@ -92,6 +92,37 @@ export function useFetch() {
     return sendJson<TResponse>(url, 'POST', body, signal);
   }
 
+  /**
+   * Multipart POST (file uploads). Deliberately NO Content-Type header: the
+   * browser must set `multipart/form-data` itself to include the boundary
+   * parameter — setting it manually produces an unparseable body.
+   */
+  async function postForm<TResponse>(
+    url: string,
+    form: FormData,
+    signal?: AbortSignal,
+  ): Promise<TResponse> {
+    sendCounter.value++;
+    try {
+      const request: RequestInit = {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: form,
+      };
+
+      if (signal !== undefined) {
+        request.signal = signal;
+      }
+
+      const response = await fetch(url, request);
+      return await handleResponse<TResponse>(response);
+    } catch (error) {
+      wrapFetchError(error);
+    } finally {
+      sendCounter.value--;
+    }
+  }
+
   async function putJson<TResponse>(
     url: string,
     body?: JsonValue,
@@ -118,6 +149,7 @@ export function useFetch() {
     isLoading,
     getJson,
     postJson,
+    postForm,
     putJson,
     patchJson,
     deleteJson,
