@@ -70,6 +70,24 @@ way, write a validator if any value has an invariant worth a precise boot
 error, and keep the committed defaults valid — the zero-secrets boot below is
 a design goal.
 
+### Collections bind by MERGE — never pre-populate a list you want to narrow
+
+Two binder behaviors that silently defeat "tighten via config":
+
+- **The binder merges into code defaults.** Binding a collection ADDS the
+  configured entries to whatever the property was initialized with; it never
+  removes code-default entries. A property initialized to a 7-item list plus
+  a 1-item config list binds to 8 items. For an allowlist this is a one-way
+  ratchet: config can widen it but never narrow it. Rule: default such
+  properties to `[]` in code, ship the real default list in
+  `appsettings.json`, and let the validator reject an empty result
+  (`AgentAttachmentOptions.AllowedContentTypes` is the executed example).
+- **Overlays replace arrays index-by-index.** A shorter array in
+  `appsettings.{Environment}.json` or env vars (`Section__List__0`) overrides
+  only the indexes it provides; higher indexes survive from the base layer.
+  Narrow a list by editing the base `appsettings.json`, not by overlaying a
+  shorter one.
+
 ### Test environment
 
 The integration tests (`WebApplicationFactory`) run with the `Testing`

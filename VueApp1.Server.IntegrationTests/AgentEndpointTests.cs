@@ -3,7 +3,10 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
@@ -657,7 +660,8 @@ public class AgentEndpointTests(IntegrationTestWebApplicationFactory factory)
     // -- Attachments: upload, hydrate-on-replay, degradation ----------------------
 
     /// <summary>
-    /// THE attachment proving test (spec-mandated): the multimodal parts must
+    /// THE attachment proving test (the second-turn pin from docs/AGENT.md
+    /// "Attachments"): the multimodal parts must
     /// be rebuilt from the store on EVERY turn — a loop that hydrates only
     /// the freshly typed message passes turn 1 and silently sends a text-only
     /// transcript from turn 2 on. The SECOND provider call is therefore the
@@ -753,6 +757,31 @@ public class AgentEndpointTests(IntegrationTestWebApplicationFactory factory)
         Assert.False(string.IsNullOrEmpty(payload.RootElement.GetProperty("attachmentId").GetString()));
         Assert.Equal("image/png", payload.RootElement.GetProperty("mediaType").GetString());
         Assert.Equal("ok.png", payload.RootElement.GetProperty("fileName").GetString());
+    }
+
+    [Fact]
+    public async Task Attachments_Upload_SetsThePerRequestBodyBound_BeforeReadingTheForm()
+    {
+        // The Content-Length precheck is bypassed by chunked uploads (no
+        // Content-Length), which would otherwise buffer up to the GLOBAL
+        // Kestrel cap (Performance:RequestLimits) before the per-file check
+        // fired. The endpoint must therefore set the per-request body-size
+        // limit to MaxBytes + the multipart allowance BEFORE the form is
+        // read — one authoritative bound for both framings, enforced by
+        // Kestrel. TestServer carries no enforcing server, so this pin
+        // records what the endpoint SET rather than provoking a server 413.
+        var recorder = new RecordingMaxRequestBodySizeFeature();
+        var chatClient = new FakeChatClient();
+        using var agentFactory = CreateAgentFactory(chatClient, builder =>
+            builder.ConfigureServices(services =>
+                services.AddSingleton<IStartupFilter>(new InstallFeatureStartupFilter(recorder))));
+        using var httpClient = agentFactory.CreateClient();
+        using var cts = CreateRequestCts();
+
+        await UploadAttachmentAsync(httpClient, "pic.png", "image/png", [1, 2, 3], cts.Token);
+
+        // Agent:Attachments:MaxBytes (5 MiB default) + the 16 KiB allowance.
+        Assert.Equal(5_242_880 + 16_384, recorder.MaxRequestBodySize);
     }
 
     [Fact]
@@ -1097,5 +1126,31 @@ public class AgentEndpointTests(IntegrationTestWebApplicationFactory factory)
 
             await Task.Delay(TimeSpan.FromMilliseconds(50), cts.Token);
         }
+    }
+
+    /// <summary>
+    /// Installs the recording body-size feature at the head of the pipeline —
+    /// TestServer ships no <see cref="IHttpMaxRequestBodySizeFeature"/> of its
+    /// own, so this is how the upload endpoint's per-request bound is observed.
+    /// </summary>
+    private sealed class InstallFeatureStartupFilter(RecordingMaxRequestBodySizeFeature feature) : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) =>
+            app =>
+            {
+                app.Use(async (context, nextMiddleware) =>
+                {
+                    context.Features.Set<IHttpMaxRequestBodySizeFeature>(feature);
+                    await nextMiddleware();
+                });
+                next(app);
+            };
+    }
+
+    private sealed class RecordingMaxRequestBodySizeFeature : IHttpMaxRequestBodySizeFeature
+    {
+        public bool IsReadOnly => false;
+
+        public long? MaxRequestBodySize { get; set; }
     }
 }

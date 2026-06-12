@@ -95,4 +95,55 @@ public class AgentOptionsValidatorTests
                 failure => failure.Contains("'not-a-media-type'", StringComparison.Ordinal));
         }
     }
+
+    [Fact]
+    public void Attachments_EmptyAllowlist_FailsNamingTheKey()
+    {
+        // The code default is deliberately EMPTY (the binder merges into
+        // non-empty defaults, making the allowlist impossible to narrow);
+        // the shipped list lives in appsettings.json. Deleting it must be a
+        // boot-time message, not an upload endpoint that accepts nothing.
+        var validator = BuildValidator([], out var provider);
+        using (provider)
+        {
+            var options = new AgentOptions
+            {
+                Attachments = new AgentAttachmentOptions { AllowedContentTypes = [] },
+            };
+
+            var result = validator.Validate(name: null, options);
+
+            Assert.True(result.Failed);
+            Assert.Contains(
+                result.Failures!,
+                failure => failure.Contains("Agent:Attachments:AllowedContentTypes", StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
+    public void Attachments_MaxBytesAboveIntMaxValue_FailsNamingTheKey()
+    {
+        // Attachments buffer in memory as byte arrays; a MaxBytes past
+        // int.MaxValue would overflow the upload buffer's capacity cast at
+        // runtime instead of failing boot with a precise message.
+        var validator = BuildValidator([], out var provider);
+        using (provider)
+        {
+            var options = new AgentOptions
+            {
+                Attachments = new AgentAttachmentOptions
+                {
+                    MaxBytes = (long)int.MaxValue + 1,
+                    AllowedContentTypes = ["image/png"],
+                },
+            };
+
+            var result = validator.Validate(name: null, options);
+
+            Assert.True(result.Failed);
+            Assert.Contains(
+                result.Failures!,
+                failure => failure.Contains("Agent:Attachments:MaxBytes", StringComparison.Ordinal));
+        }
+    }
 }

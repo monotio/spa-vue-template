@@ -164,7 +164,14 @@ public class SkillCatalogTests
         using var provider = services.BuildServiceProvider();
         var validator = new AgentOptionsValidator(provider);
 
-        var result = validator.Validate(name: null, new AgentOptions { Enabled = false });
+        // The allowlist is supplied explicitly because the CODE default is
+        // empty (the shipped list lives in appsettings.json) — this test
+        // pins catalog laziness, not attachment validation.
+        var result = validator.Validate(name: null, new AgentOptions
+        {
+            Enabled = false,
+            Attachments = new AgentAttachmentOptions { AllowedContentTypes = ["image/png"] },
+        });
 
         Assert.True(result.Succeeded);
     }

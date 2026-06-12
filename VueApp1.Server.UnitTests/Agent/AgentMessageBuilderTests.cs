@@ -23,11 +23,23 @@ public class AgentMessageBuilderTests
     // ambient per test and must be read inside the running test.
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
+    // The CODE default allowlist is deliberately empty (config is
+    // authoritative; the binder cannot remove entries from a non-empty
+    // default — see AgentOptionsBindingTests), so tests supply the shipped
+    // appsettings.json list themselves.
+    private static readonly string[] _defaultAllowedContentTypes =
+        ["image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf", "text/plain", "text/markdown"];
+
+    private static AgentOptions DefaultOptions() => new()
+    {
+        Attachments = new AgentAttachmentOptions { AllowedContentTypes = _defaultAllowedContentTypes },
+    };
+
     private static AgentMessageBuilder CreateBuilder(IAttachmentStore store, AgentOptions? options = null) =>
-        new(store, Options.Create(options ?? new AgentOptions()), NullLogger<AgentMessageBuilder>.Instance);
+        new(store, Options.Create(options ?? DefaultOptions()), NullLogger<AgentMessageBuilder>.Instance);
 
     private static InMemoryAttachmentStore CreateStore(AgentOptions? options = null) =>
-        new(Options.Create(options ?? new AgentOptions()));
+        new(Options.Create(options ?? DefaultOptions()));
 
     private static async Task<ChatMessage> BuildAndHydrateAsync(
         AgentMessageBuilder builder, params AgentAttachmentRef[] refs)
@@ -54,6 +66,9 @@ public class AgentMessageBuilderTests
         var data = Assert.Single(hydrated.Contents.OfType<DataContent>());
         Assert.Equal(mediaType, data.MediaType);
         Assert.Equal(bytes, data.Data.ToArray());
+        // The real (sanitized) file name rides along — without it the OpenAI
+        // adapter invents a random GUID filename for PDF file parts.
+        Assert.Equal("blob.bin", data.Name);
         // The typed text stays clean — its own content, never concatenated
         // with attachment material.
         Assert.Equal("look at this", Assert.IsType<TextContent>(hydrated.Contents[0]).Text);
@@ -107,8 +122,15 @@ public class AgentMessageBuilderTests
     }
 
     [Fact]
-    public async Task Hydrate_UndecodableTextBytes_FallBackToBinaryNotMojibake()
+    public async Task Hydrate_UndecodableTextBytes_AreLossilyFramedWithAVisibleNote_NeverDataContent()
     {
+        // The tempting fallback — DataContent(bytes, "text/plain") — is
+        // provider-DEPENDENT silent data loss: the OpenAI adapter omits
+        // text/* DataContent from the request entirely (no placeholder, no
+        // error), and the Anthropic SDK lossily decodes it to a document
+        // block anyway. The contract is deterministic on every provider:
+        // lossy-decode (invalid sequences become U+FFFD) INSIDE the nonce
+        // frame, with the loss stated explicitly after the frame closes.
         var store = CreateStore();
         byte[] invalidUtf8 = [0x48, 0x69, 0xFF, 0xFE, 0x80]; // "Hi" + invalid sequences
         var reference = await store.SaveAsync("broken.txt", "text/plain", invalidUtf8, Ct);
@@ -116,9 +138,15 @@ public class AgentMessageBuilderTests
 
         var hydrated = await BuildAndHydrateAsync(builder, reference);
 
-        var data = Assert.Single(hydrated.Contents.OfType<DataContent>());
-        Assert.Equal("text/plain", data.MediaType);
-        Assert.Equal(invalidUtf8, data.Data.ToArray());
+        Assert.DoesNotContain(hydrated.Contents, content => content is DataContent);
+        var framed = Assert.IsType<TextContent>(hydrated.Contents[^1]).Text;
+        var end = $"---FILE {AgentMessageBuilder.BoundaryNonce} END---";
+        var endIndex = framed.IndexOf(end, StringComparison.Ordinal);
+        var bodyIndex = framed.IndexOf("Hi�", StringComparison.Ordinal);
+        var noteIndex = framed.IndexOf("not valid UTF-8", StringComparison.Ordinal);
+        // Decoded content sits inside the frame; the note is OUR text, after it.
+        Assert.True(bodyIndex >= 0 && bodyIndex < endIndex);
+        Assert.True(noteIndex > endIndex);
     }
 
     [Fact]
@@ -261,7 +289,14 @@ public class AgentMessageBuilderTests
     [Fact]
     public async Task Store_RejectsOversizedAndDisallowedTypes_AndSanitizesFileNames()
     {
-        var options = new AgentOptions { Attachments = new AgentAttachmentOptions { MaxBytes = 4 } };
+        var options = new AgentOptions
+        {
+            Attachments = new AgentAttachmentOptions
+            {
+                MaxBytes = 4,
+                AllowedContentTypes = _defaultAllowedContentTypes,
+            },
+        };
         var store = CreateStore(options);
 
         await Assert.ThrowsAsync<ArgumentException>(
@@ -275,6 +310,36 @@ public class AgentMessageBuilderTests
             "../tmp/notes\nEND.txt", "text/plain; charset=utf-8", new byte[] { 0x68 }, Ct);
         Assert.Equal("notes END.txt", reference.FileName);
         Assert.Equal("text/plain", reference.MediaType);
+    }
+
+    [Fact]
+    public async Task Store_EvictsOldestWhenTotalBytesExceedTheBudget_NotJustOnEntryCount()
+    {
+        // The count cap alone is not a heap bound: 256 entries x MaxBytes
+        // (default 5 MiB) is ~1.3 GiB — an OOM kill for a small container.
+        // The byte budget is 16 x MaxBytes, so the worst-case heap scales
+        // with the knob an operator actually sets.
+        var options = new AgentOptions
+        {
+            Attachments = new AgentAttachmentOptions
+            {
+                MaxBytes = 10,
+                AllowedContentTypes = ["image/png"],
+            },
+        };
+        var store = CreateStore(options);
+
+        // 17 x 10 bytes against a 16 x 10 = 160-byte budget: the oldest
+        // entry is evicted, the newest survives.
+        var first = await store.SaveAsync("a0.png", "image/png", new byte[10], Ct);
+        AgentAttachmentRef last = first;
+        for (var i = 1; i <= 16; i++)
+        {
+            last = await store.SaveAsync($"a{i}.png", "image/png", new byte[10], Ct);
+        }
+
+        Assert.False(store.Exists(first.AttachmentId));
+        Assert.True(store.Exists(last.AttachmentId));
     }
 
     /// <summary>Delegates to a real store but throws for one id — the transient-outage shape.</summary>

@@ -380,7 +380,7 @@ Per-type hydration mapping (`AgentMessageBuilder`):
 | --- | --- |
 | `image/*`, `application/pdf` (and any other allowed binary type) | `DataContent(bytes, mediaType)` — both provider adapters map it natively |
 | `text/*`, valid UTF-8 | the text inlined inside the **boundary-nonce frame** (below), truncated at a 50k-character inline cap with an explicit note |
-| `text/*`, NOT valid UTF-8 | `DataContent` binary fallback — never silently-inlined mojibake |
+| `text/*`, NOT valid UTF-8 | lossy-decoded (invalid sequences become U+FFFD) inside the frame, with an explicit not-valid-UTF-8 note appended after the closing marker. Deliberately NOT a binary `DataContent` fallback: the OpenAI adapter silently drops `text/*` `DataContent` from the request (no placeholder, no error) and the Anthropic SDK lossily decodes it anyway — lossy inlining is the one outcome that is deterministic on every provider |
 | missing / store failure | the `[Attachment unavailable: "name"]` text placeholder — one attachment degrades; the turn NEVER aborts |
 
 **The boundary-nonce frame.** Inlined file text is attacker-controlled model
@@ -392,16 +392,38 @@ instructions:" inside a file stays inside the frame. The nonce is
 deliberately **per-process, not per-request**: hydrated transcripts are
 re-sent every turn, and a per-request nonce would change the replayed bytes
 each time — busting the provider prompt cache for the whole conversation
-(the same discipline as the byte-stable system prefix).
+(the same discipline as the byte-stable system prefix). Accepted residual of
+that tradeoff: "cannot forge" is precise per process lifetime — if a model
+response ever echoes a marker line back to the client, a later upload in the
+same process can embed a real closing marker and break out of the frame. A
+per-request nonce would close that path at the cost of every cache hit.
 
 Caps live in `Agent:Attachments` (`MaxBytes` 5 MiB, `MaxPerMessage` 4,
 `AllowedContentTypes` allowlist) and are enforced twice: at the upload
 endpoint as typed ProblemDetails (the composer mirrors the defaults
 client-side in `contracts/agent.ts` for instant feedback), and again inside
-`InMemoryAttachmentStore` as defense in depth.
+`InMemoryAttachmentStore` as defense in depth. Two cap subtleties are
+load-bearing:
+
+- **The allowlist narrows via `appsettings.json` only.** Its code default is
+  deliberately empty because the configuration binder merges into non-empty
+  code defaults (it can add entries, never remove them) — see the collection
+  gotcha in [docs/CONFIG.md](CONFIG.md). The validator fails boot on an
+  empty resulting list.
+- **The upload body is bounded per-request, not just per-file.** The
+  endpoint sets `IHttpMaxRequestBodySizeFeature` to `MaxBytes` + a 16 KiB
+  multipart allowance before reading the form, so a chunked upload (no
+  Content-Length) is rejected by the server at the same typed-413 bound as a
+  declared one instead of buffering up to the global Kestrel cap — and
+  raising `MaxBytes` past `Performance:RequestLimits:MaxRequestBodySizeBytes`
+  still works, because the per-request limit overrides the global one.
 
 In-memory store honesty: bytes are process-local, lost on restart, and
-bounded (256 entries, oldest evicted). Both loss modes degrade to the
+bounded on BOTH axes — 256 entries AND a total-bytes budget of 16 ×
+`MaxBytes` (80 MiB at the default), oldest evicted first. The byte budget is
+the real heap bound: a count cap alone would let an unauthenticated client
+allocate 256 × `MaxBytes` (~1.3 GiB at the default) well inside the default
+rate limit. Both loss modes degrade to the
 placeholder — never to a failed turn. **Durable upgrade:** implement
 `IAttachmentStore` over blob storage (Azure Blob / S3) — `SaveAsync` writes
 the object, `GetAsync` streams it back, `Exists` is a HEAD request; the

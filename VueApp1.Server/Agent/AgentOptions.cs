@@ -83,12 +83,17 @@ public sealed class AgentAttachmentOptions
     /// <summary>
     /// Media-type allowlist — 415 outside it. Images and PDFs hydrate as
     /// <c>DataContent</c>; <c>text/*</c> inlines under the boundary-nonce
-    /// frame (see <see cref="AgentMessageBuilder"/>). NOTE: the binder MERGES
-    /// configured entries with these code defaults (the classic collection
-    /// gotcha) — harmless here because matching dedupes through a set.
+    /// frame (see <see cref="AgentMessageBuilder"/>). The code default is
+    /// deliberately EMPTY and the shipped list lives in appsettings.json:
+    /// the configuration binder MERGES bound entries into a pre-populated
+    /// code default (it can add, never remove), so a non-empty default here
+    /// would make this security allowlist impossible to NARROW — an operator
+    /// deleting application/pdf would silently keep accepting PDFs. Config
+    /// is authoritative; the validator fails boot on an empty result. To
+    /// narrow, edit the base appsettings.json list — environment overlays
+    /// replace arrays index-by-index and leave base leftovers (docs/CONFIG.md).
     /// </summary>
-    public IReadOnlyList<string> AllowedContentTypes { get; init; } =
-        ["image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf", "text/plain", "text/markdown"];
+    public IReadOnlyList<string> AllowedContentTypes { get; init; } = [];
 
     private HashSet<string>? _allowedSet;
 
@@ -185,9 +190,25 @@ public sealed class AgentOptionsValidator(IServiceProvider serviceProvider) : IV
             failures.Add("Agent:Attachments:MaxBytes must be at least 1.");
         }
 
+        if (options.Attachments.MaxBytes > int.MaxValue)
+        {
+            failures.Add(
+                $"Agent:Attachments:MaxBytes must be at most {int.MaxValue} — attachments buffer "
+                + "in memory as byte arrays, which cannot exceed that size.");
+        }
+
         if (options.Attachments.MaxPerMessage < 1)
         {
             failures.Add("Agent:Attachments:MaxPerMessage must be at least 1.");
+        }
+
+        if (options.Attachments.AllowedContentTypes.Count == 0)
+        {
+            failures.Add(
+                "Agent:Attachments:AllowedContentTypes must contain at least one media type. The "
+                + "shipped default list lives in appsettings.json; the code default is deliberately "
+                + "empty so a narrowed config list is authoritative (the binder merges into non-empty "
+                + "code defaults and would silently resurrect removed entries — see docs/CONFIG.md).");
         }
 
         foreach (var contentType in options.Attachments.AllowedContentTypes)

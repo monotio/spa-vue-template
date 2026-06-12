@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Net.ServerSentEvents;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -825,16 +826,44 @@ static void MapAgentEndpoints(WebApplication app)
                     detail: "Attachment uploads must be multipart/form-data with exactly one file field.");
             }
 
-            // Cheap flood guard BEFORE the body is buffered; the authoritative
-            // per-file check is below. The allowance covers multipart framing.
+            // ONE authoritative request-body bound for both framings, set
+            // BEFORE any body read: a chunked upload carries no Content-Length
+            // (the precheck below cannot see it) and would otherwise buffer up
+            // to the GLOBAL Kestrel cap (Performance:RequestLimits:
+            // MaxRequestBodySizeBytes, default 10 MiB) before the per-file
+            // check fired. The per-request override also wins the other way —
+            // raising Agent:Attachments:MaxBytes past the global cap keeps
+            // max-size uploads answering the typed 413 below instead of dying
+            // as Kestrel's untyped one. TestServer ships no such feature; the
+            // per-file check stays the backstop there. The allowance covers
+            // multipart framing.
             const long MultipartOverheadAllowanceBytes = 16 * 1024;
+            if (httpContext.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } bodySizeFeature)
+            {
+                bodySizeFeature.MaxRequestBodySize = limits.MaxBytes + MultipartOverheadAllowanceBytes;
+            }
+
+            // Cheap flood guard BEFORE the body is buffered; the authoritative
+            // per-file check is below.
             if (request.ContentLength is { } contentLength
                 && contentLength > limits.MaxBytes + MultipartOverheadAllowanceBytes)
             {
                 return AttachmentTooLargeProblem(limits.MaxBytes);
             }
 
-            var form = await request.ReadFormAsync(httpContext.RequestAborted);
+            IFormCollection form;
+            try
+            {
+                form = await request.ReadFormAsync(httpContext.RequestAborted);
+            }
+            catch (BadHttpRequestException exception)
+                when (exception.StatusCode == StatusCodes.Status413PayloadTooLarge)
+            {
+                // The server enforcing the per-request bound above mid-read
+                // (a chunked upload that never declared a Content-Length).
+                return AttachmentTooLargeProblem(limits.MaxBytes);
+            }
+
             if (form.Files.Count != 1)
             {
                 return Results.Problem(
@@ -879,7 +908,11 @@ static void MapAgentEndpoints(WebApplication app)
             return Results.Json(
                 new AgentAttachmentUploadResponse(reference.AttachmentId, reference.MediaType, reference.FileName),
                 AgentJsonContext.Default.AgentAttachmentUploadResponse);
-        });
+        })
+        // Same policy split as the sibling agent POSTs: a max-size upload on
+        // a slow uplink (5 MiB at ~4 Mbit/s) exceeds the 10 s default policy
+        // when Performance:RequestTimeout is enabled.
+        .WithRequestTimeout("long-running");
 }
 
 static IResult AttachmentTooLargeProblem(long maxBytes) => Results.Problem(

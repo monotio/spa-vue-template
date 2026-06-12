@@ -185,20 +185,40 @@ public sealed partial class AgentMessageBuilder(
 
         if (stored.MediaType.StartsWith("text/", StringComparison.Ordinal))
         {
-            // Strict decode: bytes that are not valid UTF-8 fall back to
-            // binary DataContent rather than silently inlining mojibake.
+            // Strict UTF-8 first; bytes that fail it are decoded LOSSILY
+            // (invalid sequences become U+FFFD) into the same frame, with the
+            // loss stated explicitly after the closing marker. The tempting
+            // fallback — DataContent(bytes, "text/plain") — is provider-
+            // DEPENDENT silent data loss: the OpenAI adapter omits text/*
+            // DataContent from the request entirely (no placeholder, no
+            // error), and the Anthropic SDK lossily decodes it to a document
+            // block anyway. Lossy inlining is deterministic on every provider,
+            // keeps the content inside the nonce frame, and stays byte-stable
+            // across replays (same bytes, same replacement points).
             if (TryDecodeStrictUtf8(stored.Data.Span, out var text))
             {
                 return new TextContent(FrameUntrustedText(stored.FileName, stored.MediaType, text));
             }
 
-            return new DataContent(stored.Data, stored.MediaType);
+            var lossy = Encoding.UTF8.GetString(stored.Data.Span).TrimStart('\uFEFF');
+            return new TextContent(
+                FrameUntrustedText(stored.FileName, stored.MediaType, lossy) + NotValidUtf8Note);
         }
 
         // Images and PDFs: MEAI DataContent — both provider adapters map it
         // natively (Anthropic image/document blocks, OpenAI image/file parts).
-        return new DataContent(stored.Data, stored.MediaType);
+        // Name carries the real (sanitized) file name: useful model context,
+        // and without it the OpenAI adapter invents a random GUID filename
+        // for PDF file parts.
+        return new DataContent(stored.Data, stored.MediaType) { Name = stored.FileName };
     }
+
+    /// <summary>
+    /// Appended AFTER the frame closes (our text, never file data) when a
+    /// text/* attachment was not valid UTF-8 and was lossily decoded.
+    /// </summary>
+    private const string NotValidUtf8Note =
+        "\n[The file was not valid UTF-8; undecodable byte sequences were replaced with U+FFFD.]";
 
     public static string UnavailablePlaceholder(string fileName) =>
         $"{UnavailablePlaceholderPrefix}: \"{fileName}\" could not be loaded from the attachment store.]";
