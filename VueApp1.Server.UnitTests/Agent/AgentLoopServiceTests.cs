@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using VueApp1.Server.Agent;
+using VueApp1.Server.Agent.Skills;
 using VueApp1.Server.Mcp;
 using Xunit;
 
@@ -515,8 +516,13 @@ public class AgentLoopServiceTests
             var adapter = new McpToolAdapter(_provider, NullLoggerFactory.Instance);
             Policy = new AgentToolPolicy(tools, adapter, wrapped);
             Ledger = new AgentUsageLedger(wrapped, TimeProvider.System);
+            // An EMPTY skill catalog (nonexistent directory): these tests pin
+            // the loop guards; the skills-flavored loop tests live in
+            // SkillCatalogTests with a populated catalog.
+            var skills = new FileSystemSkillCatalog(
+                Path.Combine(Path.GetTempPath(), "vueapp1-no-skills", Guid.NewGuid().ToString("N")));
             Loop = new AgentLoopService(
-                Client, Policy, Store, Ledger, wrapped, _provider,
+                Client, Policy, skills, Store, Ledger, wrapped, _provider,
                 NullLogger<AgentLoopService>.Instance);
         }
 

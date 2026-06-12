@@ -1,5 +1,6 @@
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
+using VueApp1.Server.Agent.Skills;
 
 namespace VueApp1.Server.Agent;
 
@@ -146,6 +147,20 @@ public sealed class AgentOptionsValidator(IServiceProvider serviceProvider) : IV
                 // it through the aggregated ValidateOptionsResult (keeping
                 // any other queued failures visible) instead of aborting
                 // validation with a raw exception.
+                failures.Add(exception.Message);
+            }
+
+            try
+            {
+                // Shipped skills validate at BOOT, not at first use: resolving
+                // the catalog parses every Agent/Skills/*/SKILL.md, and a
+                // malformed file dies here with its path and reason instead
+                // of 500ing someone's first turn. Resolved only when the
+                // module is enabled — flag-off stays zero-cost.
+                _ = serviceProvider.GetService<FileSystemSkillCatalog>();
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException)
+            {
                 failures.Add(exception.Message);
             }
         }

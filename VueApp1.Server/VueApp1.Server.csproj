@@ -41,6 +41,16 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- App-runtime agent skills (docs/AGENT.md "Skills"): SKILL.md content
+         files read by FileSystemSkillCatalog from the output directory at
+         boot. CopyToOutputDirectory also flows them transitively into the
+         test projects' output, so integration tests see the shipped catalog.
+         Only SKILL.md ships on purpose — L2 reference files are not part of
+         this slice. -->
+    <Content Include="Agent\Skills\**\SKILL.md" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- VS launch ordering + SpaProxy wiring. Container builds pass
          ExcludeSpaReference=true: the SPA is built in its own image stage,
          and the static-web-assets pipeline would otherwise demand Node.js

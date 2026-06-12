@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -9,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Server;
 using VueApp1.Server.Agent;
+using VueApp1.Server.Agent.Skills;
 using VueApp1.Server.IntegrationTests.Infrastructure;
 using VueApp1.Server.Mcp;
 using VueApp1.Server.UnitTests.Agent;
@@ -569,6 +571,85 @@ public class AgentEndpointTests(IntegrationTestWebApplicationFactory factory)
         var problem = await ReadProblemAsync(approve, cts.Token);
         Assert.Equal("/problems/agent-approval-conflict", problem.GetProperty("type").GetString());
         Assert.Empty(executed); // fail closed: nothing ran
+    }
+
+    // -- Skills: L0 cache lock + L1 over the wire ---------------------------------
+
+    [Fact]
+    public async Task SkillsCatalog_L0PrefixBytes_AreIdenticalAcrossConversations()
+    {
+        // THE cache lock for skills: the L0 catalog rides in the system
+        // prefix, and that prefix must be BYTE-identical across different
+        // conversations — one variable byte there busts the provider prompt
+        // cache for every conversation in flight (near-quadratic input cost).
+        var chatClient = new FakeChatClient()
+            .Enqueue(FakeChatClient.Text("first answer"))
+            .Enqueue(FakeChatClient.Text("second answer"));
+        using var agentFactory = CreateAgentFactory(chatClient);
+        using var httpClient = agentFactory.CreateClient();
+        using var cts = CreateRequestCts();
+
+        using var first = await httpClient.PostAsJsonAsync(
+            "/api/agent/conversations/conv-skill-a/turns",
+            new AgentTurnRequest("What's the weather like?"), cts.Token);
+        await first.Content.ReadAsStringAsync(cts.Token);
+        using var second = await httpClient.PostAsJsonAsync(
+            "/api/agent/conversations/conv-skill-b/turns",
+            new AgentTurnRequest("Something else entirely."), cts.Token);
+        await second.Content.ReadAsStringAsync(cts.Token);
+
+        Assert.Equal(2, chatClient.Calls.Count);
+        var prefixA = chatClient.Calls[0].Messages[0];
+        var prefixB = chatClient.Calls[1].Messages[0];
+        Assert.Equal(ChatRole.System, prefixA.Role);
+        Assert.Equal(ChatRole.System, prefixB.Role);
+        Assert.Equal(Encoding.UTF8.GetBytes(prefixA.Text), Encoding.UTF8.GetBytes(prefixB.Text));
+
+        // The shipped skill is IN the stable prefix as L0 ({name, description})
+        // — and its L1 body is NOT (progressive disclosure).
+        Assert.Contains("weather-reporting", prefixA.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("never invent forecast data", prefixA.Text, StringComparison.Ordinal);
+
+        // The advertised toolset is part of the same cached prefix: same
+        // names, same order, load_skill pinned LAST.
+        Assert.Equal(
+            chatClient.Calls[0].Tools.Select(t => t.Name),
+            chatClient.Calls[1].Tools.Select(t => t.Name));
+        Assert.Equal(FileSystemSkillCatalog.LoadSkillToolName, chatClient.Calls[0].Tools[^1].Name);
+    }
+
+    [Fact]
+    public async Task LoadSkill_ReturnsTheShippedSkillBodyAsAToolResult()
+    {
+        var chatClient = new FakeChatClient()
+            .Enqueue(FakeChatClient.ToolCall(
+                "call-skill", "load_skill",
+                new Dictionary<string, object?> { ["name"] = "weather-reporting" }))
+            .Enqueue(FakeChatClient.Text("Ready to report the weather."));
+        using var agentFactory = CreateAgentFactory(chatClient);
+        using var httpClient = agentFactory.CreateClient();
+        using var cts = CreateRequestCts();
+
+        using var response = await httpClient.PostAsJsonAsync(
+            "/api/agent/conversations/conv-skill-l1/turns",
+            new AgentTurnRequest("How's the weather?"), cts.Token);
+        var parts = await ReadSsePartsAsync(response, cts.Token);
+
+        // L1 arrived over the wire as a non-error tool result...
+        var output = Assert.Single(
+            parts, part => part.GetProperty("type").GetString() == "tool-output-available");
+        Assert.False(output.GetProperty("isError").GetBoolean());
+        Assert.Contains(
+            "never invent forecast data",
+            output.GetProperty("resultJson").GetString(),
+            StringComparison.Ordinal);
+        Assert.Equal("stop", parts[^1].GetProperty("reason").GetString());
+
+        // ...and entered the model's input APPENDED after the existing
+        // transcript, never inserted into the prefix.
+        var resumed = chatClient.Calls[^1].Messages;
+        Assert.Equal(ChatRole.Tool, resumed[^1].Role);
+        Assert.Equal(ChatRole.System, resumed[0].Role);
     }
 
     // -- Detached turns + replay + usage -----------------------------------------

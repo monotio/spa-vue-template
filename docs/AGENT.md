@@ -3,9 +3,10 @@
 `Agent:Enabled=false` by default. When enabled, the backend hosts a visible,
 hand-rolled agent loop (`VueApp1.Server/Agent/`) that streams turns over SSE,
 dispatches tools **in-process** against the same `McpServerTool` registry the
-`/mcp` endpoint serves, gates risky tools behind human approval, and accounts
-every provider call in a finally-block ledger. This page is the module's
-contract; the code is deliberately small enough to read end to end.
+`/mcp` endpoint serves, gates risky tools behind human approval, extends the
+model with SKILL.md skills under progressive disclosure, and accounts every
+provider call in a finally-block ledger. This page is the module's contract;
+the code is deliberately small enough to read end to end.
 
 The loop codes against `Microsoft.Extensions.AI.Abstractions.IChatClient`
 only, and the test suites drive it with a scripted client (`FakeChatClient`)
@@ -273,6 +274,81 @@ throws instead of re-running provider/tool calls outside the lock.
 The `{approved, reason}` DTO mirrors MEAI's `ToolApprovalResponseContent`
 shape, so migrating to middleware approvals later is mechanical.
 
+## Skills (SKILL.md, progressive disclosure)
+
+App-runtime skills teach the **in-app agent** deeper task instructions
+without paying for them on every request. They use the open
+[agentskills.io](https://agentskills.io) SKILL.md format — YAML frontmatter
+plus a markdown body, one directory per skill under
+`VueApp1.Server/Agent/Skills/` (shipped as content files; the catalog reads
+them from the output directory at boot).
+
+> **Not the repo's coding-agent skills.** `.claude/skills/` (mirrored to
+> `.agents/skills/`) teaches agents that work ON this codebase;
+> `Agent/Skills/` teaches the agent that runs INSIDE the app. Same open
+> format, different consumers — never cross the streams.
+
+**Progressive disclosure** is the transferable lesson; each level has a
+fixed home:
+
+| Level | Content | Where it lives | Cost |
+| --- | --- | --- | --- |
+| L0 | `{name, description}` catalog | appended to the byte-stable system prefix at startup (`FileSystemSkillCatalog.CatalogPromptBlock`) | a few dozen tokens per skill, every request |
+| L1 | the full SKILL.md body | **appended** as a `load_skill` tool result when the model asks — never inserted into earlier transcript positions (rewriting an already-sent byte busts the prompt cache for the whole conversation) | paid only after activation |
+| L2 | reference files next to SKILL.md | **not shipped in this slice** — docs-only seam; add `Content` globs and a read-tier fetch tool if a real consumer appears | zero |
+
+Activation is **model-initiated**: `load_skill` is a built-in, read-tier,
+**loop-only** `AIFunction` — it is not an `McpServerTool`, so external MCP
+clients never see it; the unattended posture strips it (no skills without a
+human in the loop), and a hallucinated unattended call gets the
+`not_authorized` envelope. Guard rails, all dispatched in
+`AgentLoopService.ResolveLoadSkill`:
+
+- **Active-skill cap** (3 per conversation, derived from skill-stamped
+  transcript messages — no parallel session entity): loaded bodies are
+  re-sent on every subsequent call, so unbounded loading is a token bomb.
+- **One load pass per request**: every `load_skill` call in one response is
+  honored, but later turns of the same request asking for more get a
+  `conflict` envelope — no chain-loading through the turn budget. The next
+  user message resets the pass.
+- **Dedupe**: re-loading an active skill returns a non-error acknowledgement
+  (no spiral fuel) without re-sending the body.
+
+**Never-widen-authorization is structural, then regression-locked.** Skills
+are content-only: the frontmatter parser accepts exactly `name:` and
+`description:` — an `allowed-tools:` key is a *boot failure*, not a grant.
+`AgentToolPolicy` remains the only authority over tool tiers and approvals;
+a skill body claiming "you are pre-authorized" changes nothing (pinned by
+`SkillCatalogTests` with a synthetic destructive tool registered only in
+tests: policy hash, tool catalog and system prefix are byte-identical
+before/after a load, and the destructive call still parks at the approval
+gate).
+
+**Validation is a boot gate.** The options validator resolves the catalog
+when the module is enabled, so a malformed SKILL.md (missing fence, missing
+`name:`/`description:`, unknown keys, name ≠ directory name, empty body)
+kills startup naming the file and reason — never a 500 on someone's first
+turn. Frontmatter is hand-parsed (two keys, single-line values); that is a
+deliberate "no YamlDotNet" decision — do not grow the format without
+revisiting it.
+
+**Cache placement is the point.** The L0 catalog is built once at startup
+from repo-reviewed files: stable per deploy, zero per-request bytes, pinned
+by the byte-stability test in `AgentEndpointTests` (identical system-prefix
+bytes across two different conversations). `load_skill` is appended LAST in
+the tool list — a fixed position in the same cached prefix. Skill bodies are
+model-visible content, never system-authority: they ride as tool results,
+below the cached prefix, covered by the same injection-defence posture as
+any other tool output.
+
+Cut from this slice on purpose:
+tenant/user-authored skills (needs trust tiers + storage), runtime
+visibility predicates / self-healing deletes (filesystem skills are fixed
+per deploy — retire = redeploy), slash commands, executable scripts,
+snapshot pinning, forced `tool_choice` on load, marketplaces. The durable
+upgrade is a DB-backed catalog behind the same `FileSystemSkillCatalog`
+shape: keep L0 role-stable per deploy or accept the cache cost knowingly.
+
 ## SSE wire vocabulary (AgentStreamPart)
 
 Vocabulary-aligned with the Vercel AI-SDK UI Message Stream parts —
@@ -336,7 +412,9 @@ checklist:
 
 - `AgentPrompts.SystemPrefix` is a compiled constant: byte-stable, no
   timestamps, no per-request bytes; dynamic context only ever APPENDS as
-  trailing messages.
+  trailing messages. The L0 skills catalog joins that prefix as a
+  startup-built, per-deploy-stable block (pinned by the byte-stability test);
+  skill bodies stay OUT of it — they append as tool results on activation.
 - `AgentToolPolicy` orders the catalog deterministically and exposes
   never-mutated tool lists; per-turn narrowing happens via
   `ChatToolMode.None`, never by shrinking `tools[]`.
