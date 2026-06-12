@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Server;
@@ -183,6 +184,86 @@ public class AgentEndpointTests(IntegrationTestWebApplicationFactory factory)
             "/api/agent/conversations/c1/turns", new AgentTurnRequest("hi"), cts.Token);
         Assert.Equal(HttpStatusCode.NotFound, post.StatusCode);
         Assert.Equal("application/problem+json", post.Content.Headers.ContentType?.MediaType);
+    }
+
+    // -- Provider boot matrix (ConfigurationFailFastTests pattern, zero network) --
+
+    /// <summary>
+    /// Boots the REAL provider adapter behind the live /api/agent surface.
+    /// NEVER post a turn (or otherwise trigger an IChatClient call) through
+    /// a factory built here — use <see cref="CreateAgentFactory"/>'s scripted
+    /// FakeChatClient for anything turn-level. That rule is also structural,
+    /// not just conventional: both providers are pointed at an unroutable
+    /// loopback base URL, so an accidental provider call fails instantly and
+    /// deterministically instead of leaving the process with a fake key.
+    /// In-memory configuration sources are appended AFTER the host defaults,
+    /// so blanking the standard key names here overrides any real key a
+    /// developer machine may carry in its environment — the matrix stays
+    /// deterministic and secret-free everywhere.
+    /// </summary>
+    private WebApplicationFactory<Program> CreateProviderBootFactory(
+        string provider, string? anthropicKey, string? openAIKey) =>
+        factory.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting("Agent:Enabled", "true");
+            builder.UseSetting("Agent:Provider", provider);
+            builder.ConfigureAppConfiguration((_, configuration) =>
+                configuration.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    [AgentChatClientFactory.AnthropicApiKeyName] = anthropicKey ?? string.Empty,
+                    [AgentChatClientFactory.OpenAIApiKeyName] = openAIKey ?? string.Empty,
+                    // Port 9 (discard) on loopback: nothing listens, so a
+                    // stray call dies on connection refused, not on the wire.
+                    [AgentChatClientFactory.AnthropicBaseUrlName] = UnroutableBaseUrl,
+                    [AgentChatClientFactory.OpenAIBaseUrlName] = UnroutableBaseUrl,
+                }));
+        });
+
+    private const string UnroutableBaseUrl = "https://127.0.0.1:9/";
+
+    [Theory]
+    [InlineData("anthropic", "ANTHROPIC_API_KEY")]
+    [InlineData("openai", "OPENAI_API_KEY")]
+    public void ProviderBoot_EnabledWithNoKeyAndNoRegisteredClient_FailsBootNamingTheEnvVar(
+        string provider, string expectedKeyName)
+    {
+        using var brokenFactory = CreateProviderBootFactory(provider, anthropicKey: null, openAIKey: null);
+
+        var exception = Assert.ThrowsAny<Exception>(() => brokenFactory.CreateClient());
+
+        var messages = FlattenMessages(exception);
+        Assert.Contains(expectedKeyName, messages, StringComparison.Ordinal);
+        Assert.Contains("docs/AGENT.md", messages, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("anthropic")]
+    [InlineData("openai")]
+    public async Task ProviderBoot_EnabledWithKey_BootsTheRealAdapter_WithoutNetwork(string provider)
+    {
+        // Adapter CONSTRUCTION is offline; only a turn POST would call out,
+        // this test never issues one, and the helper's unroutable loopback
+        // base URL guarantees that even an accidental call could not leave
+        // the process — the fake key stays untouched.
+        using var bootedFactory = CreateProviderBootFactory(
+            provider, anthropicKey: "test-key-not-real", openAIKey: "test-key-not-real");
+        using var httpClient = bootedFactory.CreateClient();
+        using var cts = CreateRequestCts();
+
+        var response = await httpClient.GetAsync("/api/agent/usage", cts.Token);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    private static string FlattenMessages(Exception exception)
+    {
+        var messages = new List<string>();
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            messages.Add(current.Message);
+        }
+
+        return string.Join(" | ", messages);
     }
 
     // -- Incident locks --------------------------------------------------------

@@ -4,6 +4,8 @@ using System.Net.ServerSentEvents;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -415,6 +417,21 @@ static void SetupAgent(WebApplicationBuilder builder)
             builder.Configuration.GetSection(AgentOptions.SectionName),
             binder => binder.ErrorOnUnknownConfiguration = true)
         .ValidateOnStart();
+    // The provider seam (docs/AGENT.md "Providers"): AgentChatClientFactory
+    // adapts the configured provider SDK to IChatClient once at startup.
+    // LAST registration wins resolution, so anything registered after this —
+    // the tests' scripted FakeChatClient, or your own adapter — replaces the
+    // factory wholesale; TryAdd additionally skips it when a client was
+    // registered earlier. The lambda deliberately re-binds AgentOptions from
+    // IConfiguration instead of resolving IOptions<AgentOptions>: the
+    // validator below resolves IChatClient DURING options validation, and an
+    // IOptions dependency here would re-enter options creation mid-validation.
+    builder.Services.TryAddSingleton<IChatClient>(provider =>
+    {
+        var configuration = provider.GetRequiredService<IConfiguration>();
+        var options = configuration.GetSection(AgentOptions.SectionName).Get<AgentOptions>() ?? new AgentOptions();
+        return AgentChatClientFactory.Create(options, configuration);
+    });
     builder.Services.AddSingleton<McpToolAdapter>();
     builder.Services.AddSingleton<AgentToolPolicy>();
     builder.Services.AddSingleton<IAgentConversationStore, InMemoryAgentConversationStore>();

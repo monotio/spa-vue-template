@@ -33,7 +33,9 @@ Layered, last-one-wins:
 
 1. `appsettings.json` — committed defaults
 2. `appsettings.{Environment}.json` — e.g. `appsettings.Development.json`
-3. User secrets (`dotnet user-secrets`, Development only)
+3. User secrets (`dotnet user-secrets`, Development only — works out of the
+   box: `VueApp1.Server.csproj` ships a stable `<UserSecretsId>`, which both
+   the CLI and the default builder's secrets layer require)
 4. Environment variables — `Section__Key` maps to `Section:Key`
    (double underscore = section separator)
 5. Command-line arguments
