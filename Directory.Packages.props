@@ -33,12 +33,32 @@
       The main Microsoft.Extensions.AI middleware package is deliberately NOT
       referenced: the visible loop in AgentLoopService is the product, and
       Abstractions-only takes no bets on middleware behavior.
-      Treat Dependabot bumps of Microsoft.Extensions.AI.* (and, once the
-      provider PR lands, Anthropic / OpenAI) like the ModelContextProtocol
-      rule above: run the AgentEndpointTests suite — a breaking bump must
-      fail loudly in CI, never silently.
+      Treat Dependabot bumps of Microsoft.Extensions.AI.* (and the provider
+      pins below: Anthropic / OpenAI) like the ModelContextProtocol rule
+      above: run the AgentEndpointTests suite — a breaking bump must fail
+      loudly in CI, never silently.
     -->
     <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.7.0" />
+    <!--
+      Agent provider adapters (AgentChatClientFactory) — the module's only
+      new-publisher supply-chain event, deliberately isolated to its own PR:
+
+      * Anthropic: the OFFICIAL Anthropic-authored SDK (GA since v10; ships a
+        native IChatClient adapter via AsIChatClient). NOT the community
+        "Anthropic.SDK" package — similar name, different publisher.
+      * OpenAI: the official OpenAI SDK, stable 2.x line. It also flows
+        transitively from Microsoft.Extensions.AI.OpenAI; pinned explicitly so
+        CentralPackageTransitivePinningEnabled has a reviewable version to hold
+        and Dependabot bumps it visibly instead of via a transitive float.
+      * Microsoft.Extensions.AI.OpenAI: the MEAI adapter over the OpenAI SDK
+        (stable as of 10.7.0). LOCKSTEP RULE: keep its version identical to
+        Microsoft.Extensions.AI.Abstractions above — the adapter compiles
+        against its exact Abstractions surface, and a split pair is the
+        classic source of MissingMethodException at runtime.
+    -->
+    <PackageVersion Include="Anthropic" Version="12.29.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.7.0" />
+    <PackageVersion Include="OpenAI" Version="2.11.0" />
     <!--
       Official C# MCP SDK (Microsoft + Anthropic). Deliberately PINNED rather than
       floated: the MCP spec is still revising its transport layer, and this SDK is

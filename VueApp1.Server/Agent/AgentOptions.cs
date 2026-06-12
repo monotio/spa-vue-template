@@ -71,11 +71,14 @@ public sealed class AgentModelPricing
 
 /// <summary>
 /// Value sanity plus the zero-secrets boot contract: when the module is
-/// enabled there must be an <see cref="IChatClient"/> in DI. This PR ships
-/// provider-free, so that means either a pre-registered client (exactly how
+/// enabled, resolving <see cref="IChatClient"/> must SUCCEED at validation
+/// time. That resolution hits either a pre-registered client (exactly how
 /// the integration tests inject their scripted <c>FakeChatClient</c> via
-/// <c>ConfigureServices</c>) or the provider factory of a later PR. Failing
-/// at validation time keeps the failure a boot-time message, not a 500.
+/// <c>ConfigureServices</c> — last registration wins) or the
+/// <see cref="AgentChatClientFactory"/> registration from
+/// <c>SetupAgent</c>, whose own fail-fast (enabled + no key) is converted
+/// into a validation failure here. Either way the failure is a boot-time
+/// message naming the fix, not a 500 on the first turn.
 /// </summary>
 public sealed class AgentOptionsValidator(IServiceProvider serviceProvider) : IValidateOptions<AgentOptions>
 {
@@ -119,12 +122,27 @@ public sealed class AgentOptionsValidator(IServiceProvider serviceProvider) : IV
             }
         }
 
-        if (options.Enabled && serviceProvider.GetService<IChatClient>() is null)
+        if (options.Enabled)
         {
-            failures.Add(
-                "Agent:Enabled is true but no IChatClient is registered. The agent module ships "
-                + "provider-free: register an IChatClient in DI (tests pre-register a scripted client; "
-                + "production providers arrive with the provider factory — see docs/AGENT.md).");
+            try
+            {
+                if (serviceProvider.GetService<IChatClient>() is null)
+                {
+                    failures.Add(
+                        "Agent:Enabled is true but no IChatClient is registered. SetupAgent normally "
+                        + "registers the AgentChatClientFactory-backed client; either re-register one "
+                        + "in DI (tests pre-register a scripted client) or restore that wiring. "
+                        + "See docs/AGENT.md.");
+                }
+            }
+            catch (InvalidOperationException exception)
+            {
+                // AgentChatClientFactory's fail-fast (no API key for the
+                // selected provider, blanked model name) surfaces during the
+                // resolve above; report it as the validation failure so boot
+                // dies with the factory's precise, actionable message.
+                failures.Add(exception.Message);
+            }
         }
 
         return failures.Count > 0

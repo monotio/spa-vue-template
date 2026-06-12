@@ -7,19 +7,120 @@ dispatches tools **in-process** against the same `McpServerTool` registry the
 every provider call in a finally-block ledger. This page is the module's
 contract; the code is deliberately small enough to read end to end.
 
-This PR slice is **provider-free**: the loop codes against
-`Microsoft.Extensions.AI.Abstractions.IChatClient` only, and the test suites
-drive it with a scripted client (`FakeChatClient`) — zero secrets, zero
-provider packages. The provider factory (Anthropic/OpenAI, "clone + one env
-var = working agent") lands as its own pins-isolated PR; until then, enabling
-the flag requires registering an `IChatClient` in DI yourself (boot fails
-fast with a message saying exactly that).
+The loop codes against `Microsoft.Extensions.AI.Abstractions.IChatClient`
+only, and the test suites drive it with a scripted client (`FakeChatClient`)
+— zero secrets, forever. **Anthropic and OpenAI adapters ship out of the
+box** behind that same seam: `AgentChatClientFactory` is the single file
+that touches a provider SDK, selected once at startup by `Agent:Provider`.
+Clone + one env var = working agent; enabled with no key and no
+pre-registered `IChatClient`, boot fails fast with a message naming the
+missing env var.
 
 > **Same warning as `/mcp`:** there is NO auth by default (template-wide
 > stance). Do not expose `/api/agent/*` beyond trusted networks without
 > adding authentication (docs/AUTH.md). The global IP rate limiter already
 > covers the surface; the danger you must design for is invisible spend, not
 > request volume — see the ledger section.
+
+## Providers — clone plus one key
+
+`Agent:Provider` selects the `IChatClient` once at startup in
+`AgentChatClientFactory` (pinned per process; mid-conversation switching is
+deliberately impossible). Keys resolve through `IConfiguration` under the
+standard env-var names — so the environment, `dotnet user-secrets` (same key
+names, docs/CONFIG.md) and test overrides all use one lookup. Models are
+config-driven with working defaults:
+
+| `Agent:Provider` | Pin | Key | Default model (`Agent:<Provider>:Model`) |
+| --- | --- | --- | --- |
+| `anthropic` (default) | `Anthropic` 12.29.0 — the official Anthropic-authored SDK, **not** the community `Anthropic.SDK` | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5` |
+| `openai` | `OpenAI` 2.11.0 + `Microsoft.Extensions.AI.OpenAI` 10.7.0 — keep the adapter in lockstep with `Microsoft.Extensions.AI.Abstractions` | `OPENAI_API_KEY` | `gpt-5.2` |
+
+Quickstart:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...   # or OPENAI_API_KEY + Agent:Provider=openai
+# flip the flag in appsettings.Development.json: "Agent": { "Enabled": true }
+npm run dev:server
+```
+
+Tests need none of this: a pre-registered `IChatClient` (the scripted
+`FakeChatClient`) replaces the factory wholesale — last DI registration
+wins — which is also the hook for plugging in any other provider's MEAI
+adapter without touching this module.
+
+### Manual smoke recipe (~5 minutes; this is deliberately NOT in CI)
+
+Zero-secrets CI proves every template invariant offline; what it cannot
+prove is adapter fidelity against the live APIs. After a provider or MEAI
+package bump, with the quickstart above running:
+
+```bash
+# 1. One turn — expect tool-input-available → tool-output-available →
+#    text deltas → usage → finish over SSE.
+curl -N https://localhost:7191/api/agent/conversations/smoke-1/turns \
+  -H "Content-Type: application/json" \
+  -d '{"message":"What is the weather forecast? Use your tool."}'
+
+# 2. Spend is already visible (the $13k lesson).
+curl https://localhost:7191/api/agent/usage
+
+# 3. A second turn in the SAME conversation — watch cachedInputTokens in
+#    the usage part (see the cache notes below for when it can be non-zero).
+curl -N https://localhost:7191/api/agent/conversations/smoke-1/turns \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Summarize that in one sentence."}'
+```
+
+A wrong or revoked key fails the FIRST provider call fast with an auth
+error — surfaced as the stream's `error` part (raw provider text goes to
+logs, never the wire). It must never hang; if it does, treat it as an
+adapter regression.
+
+### Provider notes (the divergences behind the shared seam)
+
+No `ProviderCapabilities` abstraction — with two adapters behind one
+interface there is nothing to branch on; these are doc notes, SDK-version
+tagged (Anthropic 12.29.0 / OpenAI 2.11.0 + M.E.AI.OpenAI 10.7.0):
+
+- **Reasoning round-trip (P4):** the Anthropic adapter carries *thinking
+  signatures*, the OpenAI adapter *encrypted reasoning*, both inside
+  `TextReasoningContent.ProtectedData`. The rule stays one sentence:
+  nothing outside the adapters ever reads `ProtectedData`. The transcript's
+  `agent.provider` stamp strips foreign-provider reasoning on a provider
+  switch (P5-lite) — a switch closes the reasoning-replay window, by design.
+- **Prompt caching:** OpenAI caches long stable prefixes implicitly (no
+  opt-in; needs a prefix of roughly a thousand tokens before hits appear).
+  Anthropic requires **explicit `cache_control` breakpoints** — see below.
+  Verify either with `UsageDetails.CachedInputTokenCount` (the
+  `cachedInputTokens` wire field), not vibes.
+- **PDF / document input:** both adapters map MEAI `DataContent` with
+  `application/pdf` natively (Anthropic document blocks, OpenAI file
+  inputs) — load-bearing once attachments land; no provider file APIs, no
+  provider file IDs in the transcript (P1) either way.
+
+### Anthropic `cache_control` breakpoints (the seam, not a shipped default)
+
+The loop's cache discipline (byte-stable `AgentPrompts` prefix,
+deterministic never-mutated tool catalog) is provider-neutral code. On top
+of it, Anthropic bills cache writes/reads only at explicit breakpoints. The
+official SDK's adapter reads a marker the content carries in
+`AdditionalProperties["anthropic:cache_control"]`, set via its
+`WithCacheControl` extension:
+
+```csharp
+using Anthropic.Models.Messages; // CacheControlEphemeral, Ttl
+
+var system = new TextContent(AgentPrompts.SystemPrefix)
+    .WithCacheControl(new CacheControlEphemeral { Ttl = Ttl.Ttl1h });
+```
+
+Breakpoints cache everything up to and INCLUDING the tagged block — place
+one at the end of the stable prefix (system prompt, 1h TTL), optionally one
+on the last block before the current turn (5m TTL) for long conversations.
+The marker rides `AdditionalProperties`, so every other `IChatClient`
+implementation ignores it — tagging is harmless cross-provider, which is
+why the seam needs no abstraction.
 
 ## Surface
 
@@ -114,9 +215,11 @@ flag-matrix test). The loop dispatches through the SDK's only public seam:
   `structuredContent` raw JSON, else concatenated text blocks. Never
   parse→re-serialize.
 
-Treat `ModelContextProtocol.*` AND `Microsoft.Extensions.AI.*` Dependabot
-bumps as protocol upgrades: run `AgentEndpointTests` (the McpEndpointTests
-precedent) — the bridge tests fail loudly if the SDK moves under us.
+Treat `ModelContextProtocol.*`, `Microsoft.Extensions.AI.*`, `Anthropic`
+and `OpenAI` Dependabot bumps as protocol upgrades: run `AgentEndpointTests`
+(the McpEndpointTests precedent) — the bridge and provider-boot tests fail
+loudly if an SDK moves under us — and after provider bumps, run the manual
+smoke recipe (Providers section) for the fidelity claims CI cannot see.
 
 (For consuming *external* MCP servers, `McpClientTool : AIFunction` over an
 HTTP/stdio client transport is the right mechanism — the in-process bridge
@@ -230,7 +333,8 @@ checklist:
   `ChatToolMode.None`, never by shrinking `tools[]`.
 - Verify cache behavior with `UsageDetails.CachedInputTokenCount` (the
   `cachedInputTokens` wire field), not vibes. Provider-specific knobs
-  (Anthropic `cache_control` breakpoints) arrive with the provider PR.
+  (Anthropic `cache_control` breakpoints) are covered in the Providers
+  section above.
 
 ## The 20-line alternative (and when to take it)
 
@@ -298,5 +402,8 @@ through the real DI `McpServerTool` registry into the real
 `WeatherForecastService`, and the model-visible result carries the same
 envelope semantics `/mcp` emits. Provider-fidelity claims that zero-secrets
 CI cannot verify (thinking-signature round-trip, real cache hits) are
-SDK-version-tagged doc notes with a manual smoke recipe — they arrive with
-the provider PR.
+SDK-version-tagged doc notes backed by the manual smoke recipe in the
+Providers section. The provider layer itself stays inside that posture:
+`AgentChatClientFactoryTests` and the boot matrix in `AgentEndpointTests`
+construct the real adapters with fake keys and inspect `ChatClientMetadata`
+— no test ever issues a provider call.
