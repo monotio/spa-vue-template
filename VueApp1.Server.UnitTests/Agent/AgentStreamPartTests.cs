@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using VueApp1.Server.Agent;
+using VueApp1.Server.Agent.Attachments;
 using Xunit;
 
 namespace VueApp1.Server.UnitTests.Agent;
@@ -66,6 +67,14 @@ public class AgentStreamPartTests
                 ToolCallId = "call-2", ToolName = "delete_item", ArgumentsJson = """{"id":7}""",
             },
             "tool-approval-required", "type,toolCallId,toolName,argumentsJson,conversationId,turnId"
+        },
+        {
+            new FilePart
+            {
+                ConversationId = ConversationId, TurnId = _turnId,
+                AttachmentId = "att-1", FileName = "notes.txt", MediaType = "text/plain",
+            },
+            "file", "type,attachmentId,fileName,mediaType,conversationId,turnId"
         },
         {
             new UsagePart
@@ -187,6 +196,41 @@ public class AgentStreamPartTests
             Assert.Equal(ConversationId, part.ConversationId);
             Assert.Equal(_turnId, part.TurnId);
         });
+    }
+
+    [Fact]
+    public void ReplayMapper_DerivesFilePartsFromStampedReferences_NeverFromBytes()
+    {
+        // A user message persists attachment REFERENCES in app-level state
+        // (P1); the snapshot derives `file` parts from that stamp — the chips
+        // replay even after the in-memory blob store evicted the bytes.
+        var message = new ChatMessage(ChatRole.User, "look at these")
+        {
+            AdditionalProperties = new()
+            {
+                [AgentUiParts.AttachmentsStampKey] = (IReadOnlyList<AgentAttachmentRef>)
+                [
+                    new AgentAttachmentRef("att-1", "pic.png", "image/png"),
+                    new AgentAttachmentRef("att-2", "notes.txt", "text/plain"),
+                ],
+            },
+        };
+
+        var parts = AgentUiParts.FromMessage(message, ConversationId, _turnId).ToList();
+
+        Assert.Collection(
+            parts,
+            part => Assert.IsType<TextStartPart>(part),
+            part => Assert.Equal("look at these", Assert.IsType<TextDeltaPart>(part).Delta),
+            part => Assert.IsType<TextEndPart>(part),
+            part =>
+            {
+                var file = Assert.IsType<FilePart>(part);
+                Assert.Equal("att-1", file.AttachmentId);
+                Assert.Equal("pic.png", file.FileName);
+                Assert.Equal("image/png", file.MediaType);
+            },
+            part => Assert.Equal("notes.txt", Assert.IsType<FilePart>(part).FileName));
     }
 
     [Fact]

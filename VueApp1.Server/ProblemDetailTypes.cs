@@ -48,4 +48,10 @@ public static class ProblemDetailTypes
     /// disabled-state callout branches on exactly that difference.
     /// </summary>
     public const string AgentConversationNotFound = "/problems/agent-conversation-not-found";
+
+    /// <summary>An uploaded agent attachment exceeds Agent:Attachments:MaxBytes (413).</summary>
+    public const string AgentAttachmentTooLarge = "/problems/agent-attachment-too-large";
+
+    /// <summary>An uploaded agent attachment's media type is outside Agent:Attachments:AllowedContentTypes (415).</summary>
+    public const string AgentAttachmentTypeNotAllowed = "/problems/agent-attachment-type-not-allowed";
 }

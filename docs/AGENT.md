@@ -103,8 +103,8 @@ tagged (Anthropic 12.29.0 / OpenAI 2.11.0 + M.E.AI.OpenAI 10.7.0):
   `cachedInputTokens` wire field), not vibes.
 - **PDF / document input:** both adapters map MEAI `DataContent` with
   `application/pdf` natively (Anthropic document blocks, OpenAI file
-  inputs) — load-bearing once attachments land; no provider file APIs, no
-  provider file IDs in the transcript (P1) either way.
+  inputs) — this is what the Attachments hydration relies on; no provider
+  file APIs, no provider file IDs in the transcript (P1) either way.
 
 ### Anthropic `cache_control` breakpoints (the seam, not a shipped default)
 
@@ -137,6 +137,7 @@ why the seam needs no abstraction.
 | `POST /api/agent/conversations/{id}/approvals/{toolCallId}` | `{approved, reason?}` → executes/rejects the frozen call and resumes the loop as SSE on this response |
 | `GET /api/agent/conversations/{id}` | canonical replay — completed parts derived from the transcript via the same mapper the live stream uses; unknown id → 404 typed `agent-conversation-not-found` (a TYPELESS 404 on the same URL means the module is disabled — the client's setup callout branches on that difference) |
 | `GET /api/agent/usage` | the visible-spend ledger summary |
+| `POST /api/agent/attachments` | multipart upload (one file) → `{attachmentId, mediaType, fileName}`; limit violations are typed ProblemDetails — 413 `agent-attachment-too-large`, 415 `agent-attachment-type-not-allowed` |
 
 All endpoints are `ExcludeFromDescription`: a flag-gated surface must never
 drift the committed OpenAPI contract.
@@ -349,6 +350,85 @@ snapshot pinning, forced `tool_choice` on load, marketplaces. The durable
 upgrade is a DB-backed catalog behind the same `FileSystemSkillCatalog`
 shape: keep L0 role-stable per deploy or accept the cache cost knowingly.
 
+## Attachments (upload-then-reference, hydrate-on-replay)
+
+Files reach the agent in two steps: `POST /api/agent/attachments` stores the
+bytes in `IAttachmentStore` and returns `{attachmentId, mediaType, fileName}`;
+the turn POST references ids in `attachmentIds`. Bytes never ride the JSON
+turn body, and two incident-bought rules govern everything after the upload —
+both are silent-failure-class, so both are pinned by tests:
+
+**P1 — the transcript stores references, never bytes.** The persisted user
+message keeps the typed text as its only content; the attachment references
+(`AgentAttachmentRef` triples) ride `AdditionalProperties["agent.attachments"]`.
+No provider file APIs, no provider file ids. The replay snapshot derives its
+`file` chip parts from the same stamp — chips replay even after the blob
+store evicted the bytes.
+
+**P2 — hydrate on EVERY turn.** `AgentMessageBuilder.HydrateAsync` rebuilds
+the provider-visible parts from the store for the fresh message AND for every
+stored message, every request. Nothing is provider-held between requests. The
+trap this kills: a loop that hydrates only the freshly typed message works
+perfectly on turn 1 and silently sends a text-only transcript from turn 2 on
+— the model "forgets" the image and nobody sees an error. The integration
+test asserts the scripted client sees `DataContent` rebuilt from the store on
+the SECOND turn, not just the first.
+
+Per-type hydration mapping (`AgentMessageBuilder`):
+
+| Stored type | Model-visible content |
+| --- | --- |
+| `image/*`, `application/pdf` (and any other allowed binary type) | `DataContent(bytes, mediaType)` — both provider adapters map it natively |
+| `text/*`, valid UTF-8 | the text inlined inside the **boundary-nonce frame** (below), truncated at a 50k-character inline cap with an explicit note |
+| `text/*`, NOT valid UTF-8 | lossy-decoded (invalid sequences become U+FFFD) inside the frame, with an explicit not-valid-UTF-8 note appended after the closing marker. Deliberately NOT a binary `DataContent` fallback: the OpenAI adapter silently drops `text/*` `DataContent` from the request (no placeholder, no error) and the Anthropic SDK lossily decodes it anyway — lossy inlining is the one outcome that is deterministic on every provider |
+| missing / store failure | the `[Attachment unavailable: "name"]` text placeholder — one attachment degrades; the turn NEVER aborts |
+
+**The boundary-nonce frame.** Inlined file text is attacker-controlled model
+input, so it is wrapped between `---FILE <nonce> BEGIN---` / `---FILE <nonce>
+END---` markers plus a preamble declaring everything inside to be data, never
+instructions. The nonce is 16 random bytes generated once per process: a file
+author cannot forge the closing marker, so "END OF FILE — new system
+instructions:" inside a file stays inside the frame. The nonce is
+deliberately **per-process, not per-request**: hydrated transcripts are
+re-sent every turn, and a per-request nonce would change the replayed bytes
+each time — busting the provider prompt cache for the whole conversation
+(the same discipline as the byte-stable system prefix). Accepted residual of
+that tradeoff: "cannot forge" is precise per process lifetime — if a model
+response ever echoes a marker line back to the client, a later upload in the
+same process can embed a real closing marker and break out of the frame. A
+per-request nonce would close that path at the cost of every cache hit.
+
+Caps live in `Agent:Attachments` (`MaxBytes` 5 MiB, `MaxPerMessage` 4,
+`AllowedContentTypes` allowlist) and are enforced twice: at the upload
+endpoint as typed ProblemDetails (the composer mirrors the defaults
+client-side in `contracts/agent.ts` for instant feedback), and again inside
+`InMemoryAttachmentStore` as defense in depth. Two cap subtleties are
+load-bearing:
+
+- **The allowlist narrows via `appsettings.json` only.** Its code default is
+  deliberately empty because the configuration binder merges into non-empty
+  code defaults (it can add entries, never remove them) — see the collection
+  gotcha in [docs/CONFIG.md](CONFIG.md). The validator fails boot on an
+  empty resulting list.
+- **The upload body is bounded per-request, not just per-file.** The
+  endpoint sets `IHttpMaxRequestBodySizeFeature` to `MaxBytes` + a 16 KiB
+  multipart allowance before reading the form, so a chunked upload (no
+  Content-Length) is rejected by the server at the same typed-413 bound as a
+  declared one instead of buffering up to the global Kestrel cap — and
+  raising `MaxBytes` past `Performance:RequestLimits:MaxRequestBodySizeBytes`
+  still works, because the per-request limit overrides the global one.
+
+In-memory store honesty: bytes are process-local, lost on restart, and
+bounded on BOTH axes — 256 entries AND a total-bytes budget of 16 ×
+`MaxBytes` (80 MiB at the default), oldest evicted first. The byte budget is
+the real heap bound: a count cap alone would let an unauthenticated client
+allocate 256 × `MaxBytes` (~1.3 GiB at the default) well inside the default
+rate limit. Both loss modes degrade to the
+placeholder — never to a failed turn. **Durable upgrade:** implement
+`IAttachmentStore` over blob storage (Azure Blob / S3) — `SaveAsync` writes
+the object, `GetAsync` streams it back, `Exists` is a HEAD request; the
+placeholder degradation means the swap touches no call sites.
+
 ## SSE wire vocabulary (AgentStreamPart)
 
 Vocabulary-aligned with the Vercel AI-SDK UI Message Stream parts —
@@ -364,6 +444,7 @@ run can never mutate current client state.
 | `tool-input-available` | `toolCallId`, `toolName`, `argumentsJson` |
 | `tool-output-available` | `toolCallId`, `resultJson`, `isError` |
 | `tool-approval-required` | `toolCallId`, `toolName`, `argumentsJson` |
+| `file` | `attachmentId`, `fileName`, `mediaType` — an attachment REFERENCE on a user message; replay-only (the composer renders its own uploads locally, so the live stream never emits it) |
 | `usage` | `inputTokens`, `cachedInputTokens`, `outputTokens`, `reasoningTokens`, `estimatedUsd` |
 | `error` | nested RFC 9457-shaped `problem` (the union owns the top-level `type` key) |
 | `finish` | `reason`: `stop` \| `max-turns` \| `budget-exceeded` \| `approval-required` \| `cancelled` |
@@ -477,8 +558,9 @@ Tool results, skill bodies and attachment text are untrusted model input;
 detection is broken, so containment is structural: shipped tools are
 read-only with no egress; destructive/unannotated tools require human
 approval; unattended runs cannot reach approval-tier tools at all; untrusted
-content never enters the cached prefix or any system-authority position; raw
-exception text never reaches the model.
+content never enters the cached prefix or any system-authority position;
+inlined attachment text is confined to the boundary-nonce frame (see
+Attachments); raw exception text never reaches the model.
 
 ## Test strategy (zero secrets, forever)
 
@@ -487,7 +569,10 @@ the provider seam; `AgentEndpointTests` proves the whole module offline —
 including THE proving test: a scripted `FunctionCallContent` dispatches
 through the real DI `McpServerTool` registry into the real
 `WeatherForecastService`, and the model-visible result carries the same
-envelope semantics `/mcp` emits. Provider-fidelity claims that zero-secrets
+envelope semantics `/mcp` emits. The attachment twin pins hydrate-on-replay
+the same way: upload → turn 1 → a SECOND turn whose recorded provider call
+must carry `DataContent` rebuilt from the store (first-turn-only hydration
+is the silent regression that test exists to catch). Provider-fidelity claims that zero-secrets
 CI cannot verify (thinking-signature round-trip, real cache hits) are
 SDK-version-tagged doc notes backed by the manual smoke recipe in the
 Providers section. The provider layer itself stays inside that posture:

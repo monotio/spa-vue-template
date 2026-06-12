@@ -8,7 +8,7 @@ import type {
   AgentStreamStatus,
   AgentUsageTotals,
 } from '@/composables/useAgentStream';
-import type { AgentFinishReason } from '@/contracts/agent';
+import { AGENT_ATTACHMENT_LIMITS, type AgentFinishReason } from '@/contracts/agent';
 
 const agentMock = createMockedComposable(() => {
   const status = ref<AgentStreamStatus>('idle');
@@ -104,8 +104,85 @@ describe('AgentPage', () => {
     await wrapper.get('#agent-message').setValue('  hello agent  ');
     await wrapper.get('form').trigger('submit');
 
-    expect(state.sendMessage).toHaveBeenCalledWith('  hello agent  ');
+    expect(state.sendMessage).toHaveBeenCalledWith('  hello agent  ', []);
     expect((wrapper.get('#agent-message').element as HTMLInputElement).value).toBe('');
+  });
+
+  it('attaches valid files as removable chips and sends them with the message', async () => {
+    const state = agentMock.mock();
+    const wrapper = mount(AgentPage);
+    const file = new File(['x'], 'pic.png', { type: 'image/png' });
+
+    const input = wrapper.get('input[type="file"]');
+    Object.defineProperty(input.element, 'files', { value: [file], configurable: true });
+    await input.trigger('change');
+
+    expect(wrapper.get('[data-testid="pending-attachments"]').text()).toContain('pic.png');
+
+    await wrapper.get('#agent-message').setValue('what is this?');
+    await wrapper.get('form').trigger('submit');
+
+    // Upload-then-reference is the composable's job — the page hands over
+    // the raw Files and clears its composer state.
+    expect(state.sendMessage).toHaveBeenCalledWith('what is this?', [file]);
+    expect(wrapper.find('[data-testid="pending-attachments"]').exists()).toBe(false);
+  });
+
+  it('rejects oversized and unsupported files with a visible message (mirrors server limits)', async () => {
+    agentMock.mock();
+    const wrapper = mount(AgentPage);
+    const tooBig = new File(['x'], 'big.png', { type: 'image/png' });
+    Object.defineProperty(tooBig, 'size', { value: AGENT_ATTACHMENT_LIMITS.maxBytes + 1 });
+    const wrongType = new File(['x'], 'tool.zip', { type: 'application/zip' });
+
+    const input = wrapper.get('input[type="file"]');
+    Object.defineProperty(input.element, 'files', {
+      value: [tooBig, wrongType],
+      configurable: true,
+    });
+    await input.trigger('change');
+
+    const error = wrapper.get('[data-testid="attachment-error"]');
+    expect(error.text()).toContain('exceeds');
+    expect(error.text()).toContain('unsupported');
+    expect(wrapper.find('[data-testid="pending-attachments"]').exists()).toBe(false);
+  });
+
+  it('removes a pending chip before sending', async () => {
+    const state = agentMock.mock();
+    const wrapper = mount(AgentPage);
+    const file = new File(['x'], 'pic.png', { type: 'image/png' });
+    const input = wrapper.get('input[type="file"]');
+    Object.defineProperty(input.element, 'files', { value: [file], configurable: true });
+    await input.trigger('change');
+
+    await wrapper.get('button.chip-remove').trigger('click');
+    expect(wrapper.find('[data-testid="pending-attachments"]').exists()).toBe(false);
+
+    await wrapper.get('#agent-message').setValue('no files after all');
+    await wrapper.get('form').trigger('submit');
+    expect(state.sendMessage).toHaveBeenCalledWith('no files after all', []);
+  });
+
+  it('renders attachment chips in the transcript for file items', () => {
+    const state = agentMock.mock();
+    state.messages.value = [
+      {
+        role: 'user',
+        items: [
+          { kind: 'text', text: 'summarize this', streaming: false },
+          { kind: 'file', fileName: 'notes.txt', mediaType: 'text/plain' },
+        ],
+      },
+    ];
+
+    const wrapper = mount(AgentPage);
+
+    const chip = wrapper.getComponent({ name: 'AttachmentChip' });
+    expect(chip.text()).toContain('notes.txt');
+    expect(chip.text()).toContain('text/plain');
+    // Transcript chips are display-only; removal exists only in the composer.
+    expect(chip.find('button.chip-remove').exists()).toBe(false);
   });
 
   it('wires the approval card round-trip to approve()', async () => {

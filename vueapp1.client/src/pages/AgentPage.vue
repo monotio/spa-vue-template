@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, useTemplateRef } from 'vue';
 import { useAgentStream } from '@/composables/useAgentStream';
+import { AGENT_ATTACHMENT_LIMITS } from '@/contracts/agent';
 import ToolCallCard from '@/components/agent/ToolCallCard.vue';
 import ApprovalCard from '@/components/agent/ApprovalCard.vue';
+import AttachmentChip from '@/components/agent/AttachmentChip.vue';
 
 // The composable is the single transport owner (docs/REALTIME.md): this page
 // only renders the reduced message model and forwards user intent. Route
@@ -28,6 +30,52 @@ const {
 
 const draft = ref('');
 
+// Composer attachments: picked-but-not-sent files. Validation here MIRRORS
+// the server defaults (contracts/agent.ts) for instant feedback; the server
+// limits remain authoritative and surface as ProblemDetails if they differ.
+const pendingFiles = ref<File[]>([]);
+const attachmentError = ref('');
+const fileInput = useTemplateRef('fileInput');
+
+const acceptedTypes = AGENT_ATTACHMENT_LIMITS.allowedContentTypes.join(',');
+const atAttachmentCap = computed(
+  () => pendingFiles.value.length >= AGENT_ATTACHMENT_LIMITS.maxPerMessage,
+);
+
+function openFilePicker(): void {
+  fileInput.value?.click();
+}
+
+function onFilesPicked(event: Event): void {
+  const input = event.target as HTMLInputElement;
+  const picked = input.files === null ? [] : Array.from(input.files);
+  // Allow re-picking the same file after a removal or a rejected pick.
+  input.value = '';
+  const rejections: string[] = [];
+  for (const file of picked) {
+    if (pendingFiles.value.length >= AGENT_ATTACHMENT_LIMITS.maxPerMessage) {
+      rejections.push(`at most ${AGENT_ATTACHMENT_LIMITS.maxPerMessage} attachments per message`);
+      break;
+    }
+    if (!(AGENT_ATTACHMENT_LIMITS.allowedContentTypes as readonly string[]).includes(file.type)) {
+      rejections.push(`"${file.name}" has an unsupported type`);
+      continue;
+    }
+    if (file.size > AGENT_ATTACHMENT_LIMITS.maxBytes) {
+      const maxMb = (AGENT_ATTACHMENT_LIMITS.maxBytes / (1024 * 1024)).toFixed(0);
+      rejections.push(`"${file.name}" exceeds the ${maxMb} MB limit`);
+      continue;
+    }
+    pendingFiles.value.push(file);
+  }
+  attachmentError.value = rejections.length > 0 ? `Not attached: ${rejections.join('; ')}.` : '';
+}
+
+function removePendingFile(index: number): void {
+  pendingFiles.value.splice(index, 1);
+  attachmentError.value = '';
+}
+
 // Replay-on-mount: a revisit within the session re-renders the transcript
 // through the same reducer the live stream uses.
 onMounted(() => {
@@ -51,8 +99,11 @@ function onSubmit(): void {
   if (text.trim() === '' || composerLocked.value) {
     return;
   }
+  const files = pendingFiles.value;
   draft.value = '';
-  void sendMessage(text);
+  pendingFiles.value = [];
+  attachmentError.value = '';
+  void sendMessage(text, files);
 }
 
 const hasUsage = computed(() => usage.value.inputTokens > 0 || usage.value.outputTokens > 0);
@@ -121,6 +172,11 @@ const statusNote = computed(() => {
               </summary>
               <p class="message-text reasoning-text">{{ item.text }}</p>
             </details>
+            <AttachmentChip
+              v-else-if="item.kind === 'file'"
+              :file-name="item.fileName"
+              :media-type="item.mediaType"
+            />
             <ToolCallCard v-else :tool="item" />
           </template>
         </article>
@@ -141,7 +197,44 @@ const statusNote = computed(() => {
 
       <p class="status-note" role="status">{{ statusNote }}</p>
 
+      <div
+        v-if="pendingFiles.length > 0"
+        class="pending-attachments"
+        data-testid="pending-attachments"
+      >
+        <AttachmentChip
+          v-for="(file, fileIndex) in pendingFiles"
+          :key="`${file.name}-${fileIndex}`"
+          :file-name="file.name"
+          :media-type="file.type"
+          removable
+          @remove="removePendingFile(fileIndex)"
+        />
+      </div>
+      <p v-if="attachmentError" class="error" role="alert" data-testid="attachment-error">
+        {{ attachmentError }}
+      </p>
+
       <form class="composer" @submit.prevent="onSubmit">
+        <input
+          ref="fileInput"
+          type="file"
+          class="file-input"
+          multiple
+          :accept="acceptedTypes"
+          aria-hidden="true"
+          tabindex="-1"
+          @change="onFilesPicked"
+        />
+        <button
+          type="button"
+          class="attach"
+          :disabled="composerLocked || atAttachmentCap"
+          :aria-label="`Attach files (${pendingFiles.length} of ${AGENT_ATTACHMENT_LIMITS.maxPerMessage} attached)`"
+          @click="openFilePicker"
+        >
+          Attach
+        </button>
         <input
           id="agent-message"
           v-model="draft"
@@ -262,10 +355,21 @@ const statusNote = computed(() => {
   color: var(--color-text);
 }
 
+.pending-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+}
+
 .composer {
   display: flex;
   gap: 0.5rem;
   margin-top: 0.75rem;
+}
+
+.file-input {
+  display: none;
 }
 
 .composer input {

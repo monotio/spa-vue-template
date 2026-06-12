@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Net.ServerSentEvents;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -14,6 +15,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using VueApp1.Server;
 using VueApp1.Server.Agent;
+using VueApp1.Server.Agent.Attachments;
 using VueApp1.Server.Agent.Skills;
 using VueApp1.Server.ExceptionHandlers;
 using VueApp1.Server.Idempotency;
@@ -444,6 +446,11 @@ static void SetupAgent(WebApplicationBuilder builder)
     builder.Services.AddSingleton(static _ => new FileSystemSkillCatalog(
         Path.Combine(AppContext.BaseDirectory, "Agent", "Skills")));
     builder.Services.AddSingleton<IAgentConversationStore, InMemoryAgentConversationStore>();
+    // Attachment blobs: in-memory and bounded (oldest evicted) — refs whose
+    // bytes are gone hydrate as a placeholder, never as a failed turn.
+    // Durable upgrade: an IAttachmentStore over blob storage (docs/AGENT.md).
+    builder.Services.AddSingleton<IAttachmentStore, InMemoryAttachmentStore>();
+    builder.Services.AddSingleton<AgentMessageBuilder>();
     builder.Services.AddSingleton<AgentUsageLedger>();
     // Scoped: the loop's DI scope IS the turn scope — bridged tool calls
     // resolve their constructor dependencies from it.
@@ -709,7 +716,8 @@ static void MapAgentEndpoints(WebApplication app)
     // POSTs in-flight duplicate suppression (see IdempotencyEndpointFilter).
     agent.MapPost(
             "/conversations/{conversationId}/turns",
-            (string conversationId, AgentTurnRequest request, HttpContext httpContext, AgentLoopService loop) =>
+            async (string conversationId, AgentTurnRequest request, HttpContext httpContext,
+                AgentLoopService loop, AgentMessageBuilder messageBuilder) =>
             {
                 if (!IsValidAgentConversationId(conversationId))
                 {
@@ -725,8 +733,22 @@ static void MapAgentEndpoints(WebApplication app)
                         detail: "message must be non-empty and at most 32000 characters.");
                 }
 
+                // Attachment ids resolve BEFORE the turn starts: a turn must
+                // not begin against references that cannot hydrate.
+                var resolution = await messageBuilder.ResolveRefsAsync(
+                    request.AttachmentIds, httpContext.RequestAborted);
+                if (resolution.Error is not null)
+                {
+                    return Results.Problem(
+                        statusCode: StatusCodes.Status400BadRequest,
+                        title: "Validation failed",
+                        type: ProblemDetailTypes.ValidationFailed,
+                        detail: resolution.Error);
+                }
+
                 return MapAgentTurnStart(
-                    loop.TryStartTurn(conversationId, request, httpContext.User, httpContext.RequestAborted));
+                    loop.TryStartTurn(
+                        conversationId, request, resolution.Refs!, httpContext.User, httpContext.RequestAborted));
             })
         .AddEndpointFilter<IdempotencyEndpointFilter<AgentTurnRequest>>()
         .WithRequestTimeout("long-running");
@@ -783,7 +805,121 @@ static void MapAgentEndpoints(WebApplication app)
     agent.MapGet(
         "/usage",
         (AgentUsageLedger ledger) => Results.Json(ledger.GetSummary(), AgentJsonContext.Default.AgentUsageSummary));
+
+    // Upload-then-reference: one multipart file in, {attachmentId, mediaType,
+    // fileName} out; the turn POST references the id and the loop re-hydrates
+    // bytes from the store every request (docs/AGENT.md "Attachments"). Form
+    // reading is manual (HttpContext, not IFormFile binding) so the endpoint
+    // works without antiforgery services and owns its limit responses.
+    agent.MapPost(
+        "/attachments",
+        async (HttpContext httpContext, IAttachmentStore attachmentStore, IOptions<AgentOptions> agentOptions) =>
+        {
+            var limits = agentOptions.Value.Attachments;
+            var request = httpContext.Request;
+            if (!request.HasFormContentType)
+            {
+                return Results.Problem(
+                    statusCode: StatusCodes.Status400BadRequest,
+                    title: "Validation failed",
+                    type: ProblemDetailTypes.ValidationFailed,
+                    detail: "Attachment uploads must be multipart/form-data with exactly one file field.");
+            }
+
+            // ONE authoritative request-body bound for both framings, set
+            // BEFORE any body read: a chunked upload carries no Content-Length
+            // (the precheck below cannot see it) and would otherwise buffer up
+            // to the GLOBAL Kestrel cap (Performance:RequestLimits:
+            // MaxRequestBodySizeBytes, default 10 MiB) before the per-file
+            // check fired. The per-request override also wins the other way —
+            // raising Agent:Attachments:MaxBytes past the global cap keeps
+            // max-size uploads answering the typed 413 below instead of dying
+            // as Kestrel's untyped one. TestServer ships no such feature; the
+            // per-file check stays the backstop there. The allowance covers
+            // multipart framing.
+            const long MultipartOverheadAllowanceBytes = 16 * 1024;
+            if (httpContext.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } bodySizeFeature)
+            {
+                bodySizeFeature.MaxRequestBodySize = limits.MaxBytes + MultipartOverheadAllowanceBytes;
+            }
+
+            // Cheap flood guard BEFORE the body is buffered; the authoritative
+            // per-file check is below.
+            if (request.ContentLength is { } contentLength
+                && contentLength > limits.MaxBytes + MultipartOverheadAllowanceBytes)
+            {
+                return AttachmentTooLargeProblem(limits.MaxBytes);
+            }
+
+            IFormCollection form;
+            try
+            {
+                form = await request.ReadFormAsync(httpContext.RequestAborted);
+            }
+            catch (BadHttpRequestException exception)
+                when (exception.StatusCode == StatusCodes.Status413PayloadTooLarge)
+            {
+                // The server enforcing the per-request bound above mid-read
+                // (a chunked upload that never declared a Content-Length).
+                return AttachmentTooLargeProblem(limits.MaxBytes);
+            }
+
+            if (form.Files.Count != 1)
+            {
+                return Results.Problem(
+                    statusCode: StatusCodes.Status400BadRequest,
+                    title: "Validation failed",
+                    type: ProblemDetailTypes.ValidationFailed,
+                    detail: "Exactly one file per upload; send several files as several uploads.");
+            }
+
+            var file = form.Files[0];
+            var mediaType = AgentAttachmentOptions.NormalizeMediaType(file.ContentType);
+            if (mediaType is null || !limits.IsAllowedContentType(mediaType))
+            {
+                return Results.Problem(
+                    statusCode: StatusCodes.Status415UnsupportedMediaType,
+                    title: "Attachment type not allowed",
+                    type: ProblemDetailTypes.AgentAttachmentTypeNotAllowed,
+                    detail: $"Content type '{file.ContentType}' is not accepted. Allowed: "
+                        + $"{string.Join(", ", limits.AllowedContentTypes.Distinct(StringComparer.OrdinalIgnoreCase))}.");
+            }
+
+            if (file.Length > limits.MaxBytes)
+            {
+                return AttachmentTooLargeProblem(limits.MaxBytes);
+            }
+
+            byte[] bytes;
+            var bufferStream = new MemoryStream(capacity: (int)file.Length);
+            await using (bufferStream.ConfigureAwait(false))
+            {
+                var fileStream = file.OpenReadStream();
+                await using (fileStream.ConfigureAwait(false))
+                {
+                    await fileStream.CopyToAsync(bufferStream, httpContext.RequestAborted);
+                }
+
+                bytes = bufferStream.ToArray();
+            }
+
+            var reference = await attachmentStore.SaveAsync(
+                file.FileName, mediaType, bytes, httpContext.RequestAborted);
+            return Results.Json(
+                new AgentAttachmentUploadResponse(reference.AttachmentId, reference.MediaType, reference.FileName),
+                AgentJsonContext.Default.AgentAttachmentUploadResponse);
+        })
+        // Same policy split as the sibling agent POSTs: a max-size upload on
+        // a slow uplink (5 MiB at ~4 Mbit/s) exceeds the 10 s default policy
+        // when Performance:RequestTimeout is enabled.
+        .WithRequestTimeout("long-running");
 }
+
+static IResult AttachmentTooLargeProblem(long maxBytes) => Results.Problem(
+    statusCode: StatusCodes.Status413PayloadTooLarge,
+    title: "Attachment too large",
+    type: ProblemDetailTypes.AgentAttachmentTooLarge,
+    detail: $"Attachments are capped at {maxBytes} bytes (Agent:Attachments:MaxBytes).");
 
 static IResult MapAgentTurnStart(AgentTurnStart start) => start.Status switch
 {
