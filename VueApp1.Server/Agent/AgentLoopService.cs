@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Security.Claims;
@@ -5,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
+using VueApp1.Server.Agent.Skills;
 using VueApp1.Server.Mcp;
 
 namespace VueApp1.Server.Agent;
@@ -27,6 +29,7 @@ namespace VueApp1.Server.Agent;
 public sealed partial class AgentLoopService(
     IChatClient chatClient,
     AgentToolPolicy toolPolicy,
+    FileSystemSkillCatalog skillCatalog,
     IAgentConversationStore store,
     AgentUsageLedger ledger,
     IOptions<AgentOptions> options,
@@ -34,6 +37,17 @@ public sealed partial class AgentLoopService(
     ILogger<AgentLoopService> logger)
 {
     private const int MaxUserMessageLength = 32_000;
+
+    // The interactive toolset: the deterministically ordered MCP catalog plus
+    // load_skill appended LAST — a fixed position, so the provider-visible
+    // tool prefix stays byte-stable (both sources are singletons; every scoped
+    // instance composes identical content). load_skill is loop-only: never an
+    // McpServerTool (external MCP clients must not see it), never in the
+    // unattended posture (no skills without a human), never in the policy
+    // surface hash (it grants nothing — see FileSystemSkillCatalog).
+    private readonly IList<AITool> _interactiveTools = skillCatalog.IsEmpty
+        ? toolPolicy.Tools
+        : new ReadOnlyCollection<AITool>([.. toolPolicy.Tools, skillCatalog.LoadSkillTool]);
 
     // Collected by the "VueApp1.*" wildcard in SetupTelemetry. The gen_ai.*
     // attribute names follow the OTel GenAI semconv, which is still
@@ -279,10 +293,16 @@ public sealed partial class AgentLoopService(
             // is reused across turns — tools[] is NEVER mutated
             // mid-conversation (mutating it busts the provider's prompt-cache
             // prefix; narrowing happens via ToolMode below instead).
-            var tools = posture == AgentToolPosture.Unattended ? toolPolicy.UnattendedTools : toolPolicy.Tools;
+            var tools = posture == AgentToolPosture.Unattended ? toolPolicy.UnattendedTools : _interactiveTools;
             var requestSpentUsd = 0m;
             var consecutiveToolErrors = 0;
             var anyToolCalls = false;
+            // One load pass per REQUEST: skills loaded in one response are
+            // all honored, but a later turn of the same request asking for
+            // more is chain-loading and gets a refusal envelope — the model
+            // must not burn the turn budget stacking instructions. A new
+            // user message (a new request) resets the pass.
+            var loadPassUsed = false;
             string? finishReason = null;
 
             for (var turn = 0; turn < agentOptions.MaxTurnsPerRequest && finishReason is null; turn++)
@@ -448,8 +468,25 @@ public sealed partial class AgentLoopService(
                 }
 
                 anyToolCalls = true;
+                var skillLoadedThisTurn = false;
                 foreach (var call in toolCalls)
                 {
+                    // load_skill is loop-owned: it is not an McpServerTool and
+                    // never reaches AgentToolPolicy — the conversation-state
+                    // guards (cap, dedupe, one load pass) live right here.
+                    if (string.Equals(call.Name, FileSystemSkillCatalog.LoadSkillToolName, StringComparison.Ordinal)
+                        && !skillCatalog.IsEmpty)
+                    {
+                        var (skillOutcome, loadedSkill) = ResolveLoadSkill(conversationId, call, posture, loadPassUsed);
+                        var (skillMessage, skillPart) = AppendToolResult(
+                            conversationId, turnId, call, skillOutcome, loadedSkill);
+                        messages.Add(skillMessage);
+                        yield return skillPart;
+                        consecutiveToolErrors = skillOutcome.IsError ? consecutiveToolErrors + 1 : 0;
+                        skillLoadedThisTurn |= !skillOutcome.IsError;
+                        continue;
+                    }
+
                     if (!toolPolicy.TryGet(call.Name, out var registration))
                     {
                         var unknown = Envelope("not_found", $"No tool named '{call.Name}' is registered.");
@@ -494,6 +531,8 @@ public sealed partial class AgentLoopService(
                     yield return outputPart;
                     consecutiveToolErrors = outcome.IsError ? consecutiveToolErrors + 1 : 0;
                 }
+
+                loadPassUsed |= skillLoadedThisTurn;
 
                 if (finishReason is null && consecutiveToolErrors >= agentOptions.MaxConsecutiveToolErrors)
                 {
@@ -602,11 +641,110 @@ public sealed partial class AgentLoopService(
         }
     }
 
+    /// <summary>
+    /// The model-initiated half of skill activation (L1). Order of refusals
+    /// matters: posture and the one-pass rule are policy gates that hold even
+    /// for known names; the dedupe acknowledgement is deliberately NON-error
+    /// (no spiral fuel, no duplicated body — the transcript already carries
+    /// it). NOTHING here touches <see cref="AgentToolPolicy"/>: a skill is
+    /// words, and words cannot widen authorization (regression-locked by
+    /// SkillCatalogTests).
+    /// </summary>
+    private (McpToolCallOutcome Outcome, string? LoadedSkillName) ResolveLoadSkill(
+        string conversationId, FunctionCallContent call, AgentToolPosture posture, bool loadPassUsed)
+    {
+        if (posture == AgentToolPosture.Unattended)
+        {
+            return (Envelope("not_authorized", "Skills are not available in unattended runs."), null);
+        }
+
+        if (loadPassUsed)
+        {
+            return (Envelope(
+                "conflict",
+                "Skills were already loaded earlier in this request; chain-loading is disabled. "
+                + "Continue with the instructions already loaded — the next user message resets this."), null);
+        }
+
+        var name = ExtractSkillName(call);
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return (Envelope(
+                "invalid_parameter",
+                "load_skill requires a 'name' string argument naming a skill from the Skills catalog."), null);
+        }
+
+        if (!skillCatalog.TryGet(name, out var skill))
+        {
+            return (Envelope("not_found", $"No skill named '{name}' exists in the Skills catalog."), null);
+        }
+
+        var activeSkills = GetActiveSkills(conversationId);
+        if (activeSkills.Contains(name))
+        {
+            return (new McpToolCallOutcome(
+                $"Skill '{name}' is already active in this conversation; "
+                + "follow its instructions from the earlier tool result.",
+                IsError: false), null);
+        }
+
+        if (activeSkills.Count >= FileSystemSkillCatalog.MaxActiveSkillsPerConversation)
+        {
+            return (Envelope(
+                "conflict",
+                $"The active-skill cap ({FileSystemSkillCatalog.MaxActiveSkillsPerConversation}) for this "
+                + "conversation is reached; continue with the skills already loaded."), null);
+        }
+
+        return (new McpToolCallOutcome(skill.Body, IsError: false), name);
+    }
+
+    /// <summary>
+    /// "Active" is DERIVED from the transcript (skill-stamped tool results),
+    /// not tracked as separate session state — the same no-parallel-entity
+    /// rule the transcript itself follows, and it survives a store swap for
+    /// free.
+    /// </summary>
+    private HashSet<string> GetActiveSkills(string conversationId)
+    {
+        HashSet<string> active = new(StringComparer.Ordinal);
+        foreach (var message in store.GetMessages(conversationId))
+        {
+            if (message.AdditionalProperties?.TryGetValue(
+                    FileSystemSkillCatalog.SkillStampKey, out var value) == true
+                && value is string name)
+            {
+                active.Add(name);
+            }
+        }
+
+        return active;
+    }
+
+    private static string? ExtractSkillName(FunctionCallContent call)
+    {
+        if (call.Arguments?.TryGetValue("name", out var raw) != true)
+        {
+            return null;
+        }
+
+        // Provider adapters deliver argument values as JsonElements; tests
+        // and detached callers may hand plain strings. Anything else is a
+        // malformed call.
+        return raw switch
+        {
+            string text => text,
+            JsonElement { ValueKind: JsonValueKind.String } element => element.GetString(),
+            _ => null,
+        };
+    }
+
     private (ChatMessage Message, ToolOutputAvailablePart Part) AppendToolResult(
         string conversationId,
         Guid turnId,
         FunctionCallContent call,
-        McpToolCallOutcome outcome)
+        McpToolCallOutcome outcome,
+        string? skillStamp = null)
     {
         var resultContent = new FunctionResultContent(call.CallId, ParseResultJson(outcome.ResultJson));
         if (outcome.IsError)
@@ -618,6 +756,13 @@ public sealed partial class AgentLoopService(
         {
             AdditionalProperties = new() { [AgentUiParts.TurnStampKey] = turnId },
         };
+        if (skillStamp is not null)
+        {
+            // Marks the message carrying a skill body — the active-skill set
+            // (cap + dedupe) is derived from these stamps.
+            message.AdditionalProperties[FileSystemSkillCatalog.SkillStampKey] = skillStamp;
+        }
+
         store.AppendMessages(conversationId, [message]);
 
         var part = new ToolOutputAvailablePart
@@ -653,8 +798,9 @@ public sealed partial class AgentLoopService(
 
     private List<ChatMessage> BuildRequestMessages(string conversationId, string provider)
     {
-        // Byte-stable prefix first; dynamic content only ever APPENDS.
-        List<ChatMessage> messages = [AgentPrompts.CreateSystemMessage()];
+        // Byte-stable prefix first (constant prompt + L0 skills catalog);
+        // dynamic content only ever APPENDS.
+        List<ChatMessage> messages = [AgentPrompts.CreateSystemMessage(skillCatalog.CatalogPromptBlock)];
         foreach (var message in store.GetMessages(conversationId))
         {
             messages.Add(StripForeignReasoning(message, provider));

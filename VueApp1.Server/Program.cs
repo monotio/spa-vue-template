@@ -14,6 +14,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using VueApp1.Server;
 using VueApp1.Server.Agent;
+using VueApp1.Server.Agent.Skills;
 using VueApp1.Server.ExceptionHandlers;
 using VueApp1.Server.Idempotency;
 using VueApp1.Server.Mcp;
@@ -434,6 +435,14 @@ static void SetupAgent(WebApplicationBuilder builder)
     });
     builder.Services.AddSingleton<McpToolAdapter>();
     builder.Services.AddSingleton<AgentToolPolicy>();
+    // App-runtime skills (docs/AGENT.md "Skills") — distinct from the repo's
+    // .claude/skills (those teach coding agents working ON this codebase;
+    // these teach the agent running INSIDE the app). Same SKILL.md format,
+    // different consumers. Constructed lazily; the options validator resolves
+    // it at boot when the module is enabled, so a malformed shipped skill
+    // fails startup, never a first turn.
+    builder.Services.AddSingleton(static _ => new FileSystemSkillCatalog(
+        Path.Combine(AppContext.BaseDirectory, "Agent", "Skills")));
     builder.Services.AddSingleton<IAgentConversationStore, InMemoryAgentConversationStore>();
     builder.Services.AddSingleton<AgentUsageLedger>();
     // Scoped: the loop's DI scope IS the turn scope — bridged tool calls

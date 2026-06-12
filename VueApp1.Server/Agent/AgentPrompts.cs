@@ -15,8 +15,11 @@ public static class AgentPrompts
     // loop without cache hits pays near-quadratic input cost). Therefore:
     //   - NO timestamps, session ids, user names, or per-request context here;
     //   - dynamic context rides as TRAILING messages, never in this prefix;
-    //   - the skills L0 catalog (later PR) appends here as another byte-stable
-    //     block — content-stable per deploy, still no per-request bytes.
+    //   - the skills L0 catalog appends below as another byte-stable block —
+    //     built once at startup from repo-reviewed SKILL.md files, stable per
+    //     deploy, still no per-request bytes (pinned by the byte-stability
+    //     test in AgentEndpointTests). Skill BODIES never enter this prefix:
+    //     L1 is appended as tool results when load_skill fires.
     // The tool list obeys the same rule: AgentToolPolicy orders it
     // deterministically and never mutates it mid-conversation.
     public const string SystemPrefix =
@@ -30,8 +33,11 @@ public static class AgentPrompts
         + "Answer concisely.";
 
     /// <summary>
-    /// The byte-stable system message every request starts with. A fresh
-    /// instance per request (ChatMessage is mutable) over constant bytes.
+    /// The byte-stable system message every request starts with: the constant
+    /// prefix plus the L0 skills catalog block (empty when no skills ship).
+    /// A fresh instance per request (ChatMessage is mutable) over bytes that
+    /// are identical for every conversation in the process.
     /// </summary>
-    public static ChatMessage CreateSystemMessage() => new(ChatRole.System, SystemPrefix);
+    public static ChatMessage CreateSystemMessage(string skillsCatalogBlock = "") =>
+        new(ChatRole.System, SystemPrefix + skillsCatalogBlock);
 }
