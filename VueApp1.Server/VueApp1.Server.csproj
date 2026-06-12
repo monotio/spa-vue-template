@@ -8,6 +8,12 @@
          CS1591 (missing XML comment) stays off — document what helps, not everything. -->
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <!-- Stable id so "dotnet user-secrets set" works out of the box: the
+         docs/CONFIG.md layer 3 recipe and the agent module's missing-key
+         fail-fast message both point a cloner at user-secrets, and without
+         this property that recipe errors instead. Development only; the
+         secrets layer never loads outside that environment. -->
+    <UserSecretsId>vueapp1-server</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
@@ -15,9 +21,14 @@
     <PackageReference Include="Microsoft.AspNetCore.SpaProxy" />
     <!-- Agent module: the loop codes against IChatClient from Abstractions
          ONLY (no Microsoft.Extensions.AI middleware package — see
-         Directory.Packages.props rationale). -->
+         Directory.Packages.props rationale). The provider SDKs below are
+         touched solely by AgentChatClientFactory, which adapts them to that
+         same IChatClient seam at startup. -->
+    <PackageReference Include="Anthropic" />
     <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
     <PackageReference Include="Microsoft.Extensions.Caching.Hybrid" />
+    <PackageReference Include="OpenAI" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" />
     <PackageReference Include="NetEscapades.AspNetCore.SecurityHeaders" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
