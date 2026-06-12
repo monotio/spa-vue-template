@@ -34,9 +34,21 @@ onMounted(() => {
   void restore();
 });
 
+// The composer locks while an approval is pending, not just while
+// streaming: sending a new message then would hand the provider a
+// transcript with an unanswered tool call (see the wedge guard in
+// useAgentStream.sendMessage) — the approval must be resolved or rejected
+// first, and the UI must not offer the wedging action.
+const composerLocked = computed(
+  () =>
+    status.value === 'streaming' ||
+    status.value === 'awaiting-approval' ||
+    pendingApproval.value !== undefined,
+);
+
 function onSubmit(): void {
   const text = draft.value;
-  if (text.trim() === '' || status.value === 'streaming') {
+  if (text.trim() === '' || composerLocked.value) {
     return;
   }
   draft.value = '';
@@ -50,7 +62,7 @@ const statusNote = computed(() => {
     return 'The agent is responding…';
   }
   if (status.value === 'awaiting-approval') {
-    return 'The agent is waiting for your approval.';
+    return 'The agent is waiting for your approval. Approve or reject the pending tool call to continue.';
   }
   switch (lastFinishReason.value) {
     case 'max-turns':
@@ -137,12 +149,12 @@ const statusNote = computed(() => {
           autocomplete="off"
           aria-label="Message to the agent"
           placeholder="Ask the agent…"
-          :disabled="status === 'streaming'"
+          :disabled="composerLocked"
         />
         <button v-if="status === 'streaming'" type="button" class="stop" @click="abort">
           Stop
         </button>
-        <button v-else type="submit" :disabled="draft.trim() === ''">Send</button>
+        <button v-else type="submit" :disabled="draft.trim() === '' || composerLocked">Send</button>
       </form>
 
       <footer v-if="hasUsage" class="usage" data-testid="usage-footer">

@@ -93,12 +93,15 @@ export interface AgentErrorPart extends AgentStreamPartBase {
   readonly problem: AgentProblem;
 }
 
-export type AgentFinishReason =
-  | 'stop'
-  | 'max-turns'
-  | 'budget-exceeded'
-  | 'approval-required'
-  | 'cancelled';
+export const AGENT_FINISH_REASONS = [
+  'stop',
+  'max-turns',
+  'budget-exceeded',
+  'approval-required',
+  'cancelled',
+] as const;
+
+export type AgentFinishReason = (typeof AGENT_FINISH_REASONS)[number];
 
 export interface AgentFinishPart extends AgentStreamPartBase {
   readonly type: 'finish';
@@ -188,6 +191,8 @@ export function isAgentProblemType(type: string | undefined): boolean {
 // a version-skewed server breaks them at runtime. Guards turn that breakage
 // into a loud (or deliberately tolerant) signal next to its cause.
 
+const FINISH_REASON_SET: ReadonlySet<string> = new Set(AGENT_FINISH_REASONS);
+
 function isIdentity(value: Record<string, unknown>): boolean {
   return typeof value['conversationId'] === 'string' && typeof value['turnId'] === 'string';
 }
@@ -241,7 +246,12 @@ export function isAgentStreamPart(value: unknown): value is AgentStreamPart {
       return isObject(problem) && typeof problem['title'] === 'string';
     }
     case 'finish':
-      return typeof value['reason'] === 'string';
+      // The reason set is validated, not just typeof-checked: `finish` is
+      // the one part whose VALUE flows onward under a closed union type
+      // (`lastFinishReason`), and consumers exhaustively switch on it. An
+      // unknown reason drops the part — the same forward tolerance as an
+      // unknown part type, instead of an out-of-union string in disguise.
+      return typeof value['reason'] === 'string' && FINISH_REASON_SET.has(value['reason']);
     default:
       return false;
   }

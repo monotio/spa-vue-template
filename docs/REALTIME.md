@@ -59,10 +59,15 @@ corrupt naive `split('\n\n')` parsers and is locked by adversarial fixtures
 (`src/composables/__tests__/useAgentStream.spec.ts`):
 
 - **multi-byte UTF-8 split mid-character** across reads — decode with ONE
-  `TextDecoder` in `{ stream: true }` mode; never `decode()` per chunk;
+  `TextDecoder` in `{ stream: true }` mode; never `decode()` per chunk.
+  Compute fixture split points in UTF-8 **bytes**: `String#indexOf` counts
+  UTF-16 units, and a code-unit offset lands on a character boundary in the
+  byte array — a fixture that never splits mid-character can never fail;
 - **CRLF split across reads** — a chunk ending in `\r` must not let the
   `\n` arriving in the next chunk spawn a phantom empty line (double
-  dispatch);
+  dispatch). The discriminating fixture splits the `\r\n` inside a
+  MULTI-line `data:` event: at an event boundary, a phantom blank line is
+  masked by the legitimate dispatch that follows it;
 - **frames split across reads** — accumulate lines, dispatch only on the
   blank line;
 - **incomplete event at EOF is discarded** (WHATWG rule) — half a JSON

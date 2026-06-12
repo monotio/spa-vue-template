@@ -57,6 +57,18 @@ describe('agent wire contract', () => {
     }
   });
 
+  it('rejects finish parts whose reason is outside the closed union', () => {
+    // `lastFinishReason` is typed as the CLOSED AgentFinishReason union and
+    // consumers exhaustively switch on it — an unvalidated server string must
+    // not flow through under that type. A future server-added reason drops
+    // the part (the same forward tolerance as an unknown part type).
+    for (const reason of ['turn-in-progress', 'new-server-reason']) {
+      expect(isAgentStreamPart(JSON.parse(`{"type":"finish","reason":"${reason}",${ID}}`))).toBe(
+        false,
+      );
+    }
+  });
+
   it('rejects parts missing the identity fields every part must carry', () => {
     expect(isAgentStreamPart(JSON.parse('{"type":"text-start"}'))).toBe(false);
     expect(

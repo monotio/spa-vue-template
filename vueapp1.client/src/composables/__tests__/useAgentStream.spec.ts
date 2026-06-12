@@ -143,10 +143,17 @@ describe('parseSseStream', () => {
   });
 
   it('decodes multi-byte UTF-8 split mid-character', async () => {
-    // 'é' is 2 bytes, '✨' is 3, '🌧' is 4 — split inside the 4-byte emoji.
+    // 'é' is 2 bytes, '✨' is 3, '🌧' is 4 — split INSIDE the 4-byte emoji.
+    // The split point must be computed in UTF-8 BYTES: String#indexOf counts
+    // UTF-16 code units, and a code-unit offset lands on a character
+    // boundary in the byte array (a fixture that never splits mid-character
+    // cannot fail against a per-chunk decode() regression).
     const payload = 'data: {"delta":"é ✨ 🌧"}\n\n';
     const bytes = encoder.encode(payload);
-    const splitAt = payload.indexOf('🌧') + 2; // byte offset lands inside the surrogate's bytes
+    const splitAt = encoder.encode(payload.slice(0, payload.indexOf('🌧'))).length + 2;
+    // Self-check: the byte AT the split is a UTF-8 continuation byte
+    // (10xxxxxx) — proof the boundary really falls inside a character.
+    expect(bytes[splitAt] & 0xc0).toBe(0x80);
     expect(await collect(streamOf(bytes.slice(0, splitAt), bytes.slice(splitAt)))).toEqual([
       '{"delta":"é ✨ 🌧"}',
     ]);
@@ -160,6 +167,16 @@ describe('parseSseStream', () => {
       'one',
       'two',
     ]);
+  });
+
+  it('reassembles a CRLF split inside a multi-line data event (phantom-blank-line lock)', async () => {
+    // The discriminating fixture for the skip-leading-LF mechanism: the
+    // \r\n terminating the FIRST data line of a TWO-line event is split
+    // across reads. A buggy parser that consumes the chunk-final \r as a
+    // complete terminator and lets the next chunk's leading \n spawn a
+    // phantom blank line dispatches two events ['one', 'two'] instead of
+    // the single multi-line event 'one\ntwo'.
+    expect(await collect(streamOf('data: one\r', '\ndata: two\r\n\r\n'))).toEqual(['one\ntwo']);
   });
 
   it('accepts lone-CR line terminators', async () => {
@@ -492,6 +509,166 @@ describe('useAgentStream', () => {
     await rejection;
 
     expect(findTool(agent.messages.value, 'call-9')?.status).toBe('rejected');
+    expect(agent.status.value).toBe('idle');
+  });
+
+  it('queues multiple pending approvals and surfaces the next after one resolves', async () => {
+    const handles = mockSseFetch();
+    const agent = setupAgent();
+
+    const send = agent.sendMessage('do two writes');
+    await tick();
+    // One model response froze TWO approval-tier calls: the server emits
+    // tool-approval-required for both, then parks (finish approval-required).
+    handles[0].feed.push(
+      frame(
+        part({
+          type: 'tool-approval-required',
+          toolCallId: 'call-a',
+          toolName: 'write_a',
+          argumentsJson: '{"a":1}',
+        }),
+      ),
+    );
+    handles[0].feed.push(
+      frame(
+        part({
+          type: 'tool-approval-required',
+          toolCallId: 'call-b',
+          toolName: 'write_b',
+          argumentsJson: '{"b":2}',
+        }),
+      ),
+    );
+    handles[0].feed.push(frame(part({ type: 'finish', reason: 'approval-required' })));
+    handles[0].feed.close();
+    await send;
+
+    expect(agent.status.value).toBe('awaiting-approval');
+    expect(agent.pendingApproval.value?.toolCallId).toBe('call-a');
+
+    // Approve the surfaced one. On resume the server executes it and parks
+    // again WITHOUT re-emitting the remaining approval — the client must
+    // surface call-b from its own queue, not dead-end on undefined.
+    const approval = agent.approve('call-a');
+    await tick();
+    const second = handles[1];
+    second.feed.push(
+      frame(
+        part({
+          type: 'tool-output-available',
+          toolCallId: 'call-a',
+          resultJson: '{"ok":true}',
+          isError: false,
+        }),
+      ),
+    );
+    second.feed.push(frame(part({ type: 'finish', reason: 'approval-required' })));
+    second.feed.close();
+    await approval;
+
+    expect(agent.status.value).toBe('awaiting-approval');
+    expect(agent.pendingApproval.value).toEqual({
+      toolCallId: 'call-b',
+      toolName: 'write_b',
+      argumentsJson: '{"b":2}',
+    });
+  });
+
+  it('refuses sendMessage while an approval is pending (wedge guard)', async () => {
+    const handles = mockSseFetch();
+    const agent = setupAgent();
+
+    const send = agent.sendMessage('delete it');
+    await tick();
+    handles[0].feed.push(
+      frame(
+        part({
+          type: 'tool-approval-required',
+          toolCallId: 'call-9',
+          toolName: 'delete_item',
+          argumentsJson: '{}',
+        }),
+      ),
+    );
+    handles[0].feed.push(frame(part({ type: 'finish', reason: 'approval-required' })));
+    handles[0].feed.close();
+    await send;
+    expect(agent.status.value).toBe('awaiting-approval');
+
+    const before = agent.messages.value.length;
+    await agent.sendMessage('and now something else entirely');
+
+    // The transcript still holds an unanswered tool call (the frozen
+    // approval): a new user turn now would make every real provider reject
+    // the transcript (tool_use without tool_result). The composable must
+    // refuse — resolve or reject the approval first.
+    expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(1);
+    expect(agent.messages.value).toHaveLength(before);
+    expect(agent.status.value).toBe('awaiting-approval');
+    expect(agent.pendingApproval.value?.toolCallId).toBe('call-9');
+  });
+
+  it('rolls back the optimistic approval mutation when the POST fails before streaming', async () => {
+    const handles = mockSseFetch();
+    const agent = setupAgent();
+
+    const send = agent.sendMessage('delete it');
+    await tick();
+    handles[0].feed.push(
+      frame(
+        part({
+          type: 'tool-approval-required',
+          toolCallId: 'call-9',
+          toolName: 'delete_item',
+          argumentsJson: '{"id":7}',
+        }),
+      ),
+    );
+    handles[0].feed.push(frame(part({ type: 'finish', reason: 'approval-required' })));
+    handles[0].feed.close();
+    await send;
+
+    // The approval POST is refused (409 agent-approval-conflict). The server
+    // consumes a pending only inside a STARTED stream, so the frozen
+    // approval is still actionable — the card must come back, not vanish
+    // behind status='error' with a tool stuck at 'running'.
+    mockProblemFetch(409, {
+      type: '/problems/agent-approval-conflict',
+      title: 'Approval no longer valid',
+      status: 409,
+      detail: 'The tool policy changed since this approval was requested.',
+    });
+    await agent.approve('call-9');
+
+    expect(agent.errorMessage.value).toBe('Approval no longer valid');
+    expect(agent.status.value).toBe('awaiting-approval');
+    expect(agent.pendingApproval.value?.toolCallId).toBe('call-9');
+    expect(findTool(agent.messages.value, 'call-9')?.status).toBe('awaiting-approval');
+  });
+
+  it('never applies parts from a superseded stream after ownership transfer', async () => {
+    const handles = mockSseFetch();
+    const agent = setupAgent();
+
+    const first = agent.sendMessage('first');
+    await tick();
+    // The chunk's read resolves in the SAME microtask drain as the
+    // supersession below: without an ownership check at the part-application
+    // site, the dead run's error part lands AFTER the new stream took over.
+    handles[0].feed.push(
+      frame(part({ type: 'error', problem: { title: 'dead-run failure', status: 502 } })),
+    );
+    const second = agent.sendMessage('second');
+    await tick();
+
+    // The dead run shares the conversationId, so only ownership can stop it.
+    expect(agent.status.value).toBe('streaming');
+    expect(agent.errorMessage.value).toBeUndefined();
+
+    handles[1].feed.push(frame(part({ type: 'finish', reason: 'stop' })));
+    handles[1].feed.close();
+    await Promise.all([first, second]);
     expect(agent.status.value).toBe('idle');
   });
 

@@ -190,7 +190,7 @@ export interface AgentUsageTotals {
 }
 
 /**
- * Status-rank idempotence (B09-A6): stream-driven updates may only move a
+ * Status-rank idempotence: stream-driven updates may only move a
  * tool card FORWARD — duplicated or re-ordered parts (network retries,
  * replay-after-live) can never regress a completed card to "running" or
  * flip a human "rejected" verdict into a generic error.
@@ -400,7 +400,13 @@ export function useAgentStream() {
 
   const status = ref<AgentStreamStatus>('idle');
   const messages = ref<AgentChatMessage[]>([]);
-  const pendingApproval = ref<AgentPendingApproval>();
+  // Pending approvals are a QUEUE, not a single slot: one model response can
+  // freeze SEVERAL approval-tier calls — the server emits
+  // tool-approval-required for each, and on resume it parks again WITHOUT
+  // re-emitting the remainder. The surfaced card is always the head;
+  // resolving one surfaces the next.
+  const pendingApprovals = ref<AgentPendingApproval[]>([]);
+  const pendingApproval = computed(() => pendingApprovals.value[0]);
   const errorMessage = ref<string>();
   const agentDisabled = ref(false);
   const budgetResetAtUtc = ref<string>();
@@ -443,14 +449,20 @@ export function useAgentStream() {
     }
   }
 
+  function enqueuePendingApproval(approval: AgentPendingApproval): void {
+    if (!pendingApprovals.value.some((p) => p.toolCallId === approval.toolCallId)) {
+      pendingApprovals.value.push(approval);
+    }
+  }
+
   function applyStreamSideEffects(part: AgentStreamPart): void {
     switch (part.type) {
       case 'tool-approval-required':
-        pendingApproval.value = {
+        enqueuePendingApproval({
           toolCallId: part.toolCallId,
           toolName: part.toolName,
           argumentsJson: part.argumentsJson,
-        };
+        });
         break;
       case 'usage':
         usage.value = {
@@ -478,8 +490,20 @@ export function useAgentStream() {
     }
   }
 
-  async function consumeStream(body: ReadableStream<Uint8Array>, expectedConversationId: string) {
+  async function consumeStream(
+    body: ReadableStream<Uint8Array>,
+    expectedConversationId: string,
+    controller: AbortController,
+    progress: { parts: number },
+  ): Promise<void> {
     for await (const data of parseSseStream(body)) {
+      if (activeController !== controller) {
+        // Latest-wins enforcement at the ONLY place state is mutated: a
+        // read that resolved just before a supersession still delivers its
+        // chunk afterwards, and a superseded run shares the conversationId —
+        // only ownership can stop its parts from mutating current state.
+        return;
+      }
       let parsed: unknown;
       try {
         parsed = JSON.parse(data);
@@ -494,10 +518,11 @@ export function useAgentStream() {
         continue;
       }
       if (parsed.conversationId !== expectedConversationId) {
-        continue; // late event from a dead run (B09-A5) — never mutate current state
+        continue; // late event from a dead run — never mutate current state
       }
       applyAgentPart(messages.value, parsed);
       applyStreamSideEffects(parsed);
+      progress.parts += 1;
     }
   }
 
@@ -539,15 +564,21 @@ export function useAgentStream() {
   /**
    * Shared stream runner with latest-wins ownership: starting a new stream
    * aborts the previous one, and a superseded stream may no longer touch
-   * shared state (its abort fallout belongs to a dead run).
+   * shared state — enforced where parts are applied (consumeStream) AND in
+   * the error/cleanup paths below (its abort fallout belongs to a dead run).
+   *
+   * `failedBeforeFirstPart` is true only when the request failed before ANY
+   * part was applied: the server never started the continuation, so a
+   * caller's optimistic mutations can be rolled back safely.
    */
   async function runStream(
     expectedConversationId: string,
     start: (signal: AbortSignal) => Promise<Response>,
-  ): Promise<void> {
+  ): Promise<{ failedBeforeFirstPart: boolean }> {
     abort();
     const controller = new AbortController();
     activeController = controller;
+    const progress = { parts: 0 };
     try {
       const response = await start(controller.signal);
       if (!response.ok) {
@@ -556,13 +587,13 @@ export function useAgentStream() {
       if (response.body === null) {
         throw new Error('Agent stream response carried no body.');
       }
-      await consumeStream(response.body, expectedConversationId);
+      await consumeStream(response.body, expectedConversationId, controller, progress);
       if (activeController === controller && status.value === 'streaming') {
         status.value = 'idle'; // stream ended without a finish part
       }
     } catch (error) {
       if (activeController !== controller) {
-        return; // superseded by a newer stream — it owns the state now
+        return { failedBeforeFirstPart: false }; // superseded — the newer stream owns the state
       }
       if (controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) {
         // Deliberate cancel: keep the partial output (the server billed for
@@ -571,20 +602,31 @@ export function useAgentStream() {
         if (status.value === 'streaming') {
           status.value = 'idle';
         }
-        return;
+        return { failedBeforeFirstPart: false };
       }
       applyRequestError(error);
+      return { failedBeforeFirstPart: progress.parts === 0 };
     } finally {
       if (activeController === controller) {
         activeController = null;
         closeAllStreamingItems();
       }
     }
+    return { failedBeforeFirstPart: false };
   }
 
   async function sendMessage(text: string): Promise<void> {
     const message = text.trim();
     if (message === '' || agentDisabled.value) {
+      return;
+    }
+    if (status.value === 'awaiting-approval' || pendingApprovals.value.length > 0) {
+      // WEDGE GUARD: a frozen approval means the transcript holds a tool
+      // call with no result yet. Appending a user message now produces a
+      // transcript real providers reject (tool_use without tool_result →
+      // every subsequent call 400s), and the approval result would land out
+      // of position afterwards. Resolve or reject the pending approval
+      // first — the page's composer mirrors this rule.
       return;
     }
     const id = ensureConversationId();
@@ -619,16 +661,19 @@ export function useAgentStream() {
     // Local, user-driven transition (not status-ranked: the human verdict
     // outranks stream ordering rules).
     const item = findToolItem(messages.value, toolCallId);
+    const previousItemStatus = item?.status;
     if (item !== undefined) {
       item.status = approved ? 'running' : 'rejected';
     }
-    if (pendingApproval.value?.toolCallId === toolCallId) {
-      pendingApproval.value = undefined;
+    const queueIndex = pendingApprovals.value.findIndex((p) => p.toolCallId === toolCallId);
+    const dequeued = queueIndex === -1 ? undefined : pendingApprovals.value[queueIndex];
+    if (queueIndex !== -1) {
+      pendingApprovals.value.splice(queueIndex, 1);
     }
     errorMessage.value = undefined;
     status.value = 'streaming';
     const request: AgentApprovalRequest = { approved, reason };
-    await runStream(id, (signal) =>
+    const { failedBeforeFirstPart } = await runStream(id, (signal) =>
       fetch(`/api/agent/conversations/${id}/approvals/${encodeURIComponent(toolCallId)}`, {
         method: 'POST',
         credentials: 'same-origin',
@@ -638,6 +683,30 @@ export function useAgentStream() {
         signal,
       }),
     );
+    if (failedBeforeFirstPart) {
+      // The POST itself was refused (409 approval/turn conflict, network
+      // failure): the server consumes a pending only inside a STARTED
+      // stream, so the frozen approval is still actionable. Roll the
+      // optimistic mutations back so the card returns instead of leaving a
+      // tool stuck at 'running' with no control — the error message stays
+      // visible alongside the restored card.
+      if (item !== undefined && previousItemStatus !== undefined) {
+        item.status = previousItemStatus;
+      }
+      if (
+        dequeued !== undefined &&
+        !pendingApprovals.value.some((p) => p.toolCallId === toolCallId)
+      ) {
+        pendingApprovals.value.splice(
+          Math.min(queueIndex, pendingApprovals.value.length),
+          0,
+          dequeued,
+        );
+      }
+      if (!agentDisabled.value && pendingApprovals.value.length > 0) {
+        status.value = 'awaiting-approval';
+      }
+    }
   }
 
   function approve(toolCallId: string, reason?: string): Promise<void> {
@@ -670,21 +739,21 @@ export function useAgentStream() {
           }
         }
       }
-      let lastApproval: AgentPendingApproval | undefined;
+      const restoredApprovals: AgentPendingApproval[] = [];
       for (const pending of snapshot.pendingApprovals) {
         if (!isAgentStreamPart(pending) || pending.type !== 'tool-approval-required') {
           continue;
         }
         applyAgentPart(next, pending);
-        lastApproval = {
+        restoredApprovals.push({
           toolCallId: pending.toolCallId,
           toolName: pending.toolName,
           argumentsJson: pending.argumentsJson,
-        };
+        });
       }
       messages.value = next;
-      pendingApproval.value = lastApproval;
-      if (lastApproval !== undefined) {
+      pendingApprovals.value = restoredApprovals;
+      if (restoredApprovals.length > 0) {
         status.value = 'awaiting-approval';
       }
     } catch (error) {
@@ -692,9 +761,12 @@ export function useAgentStream() {
         error instanceof ProblemError &&
         error.problem.type === AGENT_PROBLEM_TYPES.conversationNotFound
       ) {
-        // The server forgot us (in-memory store, process restart) — start fresh.
+        // The server forgot us (in-memory store, process restart) — start
+        // fresh, including any stale approvals that would otherwise lock the
+        // composer against a conversation the server no longer knows.
         conversationId = null;
         writePersistedConversationId(null);
+        pendingApprovals.value = [];
         return;
       }
       applyRequestError(error);

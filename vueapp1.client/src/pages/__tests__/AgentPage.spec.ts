@@ -138,6 +138,26 @@ describe('AgentPage', () => {
     expect(state.reject).toHaveBeenCalledWith('call-9', 'not in production');
   });
 
+  it('locks the composer while an approval is pending', async () => {
+    const state = agentMock.mock();
+    state.status.value = 'awaiting-approval';
+    state.pendingApproval.value = {
+      toolCallId: 'call-9',
+      toolName: 'delete_item',
+      argumentsJson: '{}',
+    };
+
+    const wrapper = mount(AgentPage);
+
+    // Sending a new message with a frozen approval hands the provider a
+    // transcript with an unanswered tool call — the composer must not offer
+    // the wedging action (mirrors the sendMessage guard in the composable).
+    expect((wrapper.get('#agent-message').element as HTMLInputElement).disabled).toBe(true);
+    await wrapper.get('#agent-message').setValue('detour message');
+    await wrapper.get('form').trigger('submit');
+    expect(state.sendMessage).not.toHaveBeenCalled();
+  });
+
   it('shows Stop while streaming and forwards it to abort()', async () => {
     const state = agentMock.mock();
     state.status.value = 'streaming';
