@@ -35,8 +35,10 @@
       Abstractions-only takes no bets on middleware behavior.
       Treat Dependabot bumps of Microsoft.Extensions.AI.* (and the provider
       pins below: Anthropic / OpenAI) like the ModelContextProtocol rule
-      above: run the AgentEndpointTests suite — a breaking bump must fail
-      loudly in CI, never silently.
+      above: run every Agent suite (test filter FullyQualifiedName~Agent,
+      which covers AgentEndpointTests AND the AgentChatClientFactoryTests
+      adapter-metadata tripwires) — a breaking bump must fail loudly in CI,
+      never silently.
     -->
     <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.7.0" />
     <!--

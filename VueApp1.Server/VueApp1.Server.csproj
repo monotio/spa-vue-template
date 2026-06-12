@@ -8,6 +8,12 @@
          CS1591 (missing XML comment) stays off — document what helps, not everything. -->
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <!-- Stable id so "dotnet user-secrets set" works out of the box: the
+         docs/CONFIG.md layer 3 recipe and the agent module's missing-key
+         fail-fast message both point a cloner at user-secrets, and without
+         this property that recipe errors instead. Development only; the
+         secrets layer never loads outside that environment. -->
+    <UserSecretsId>vueapp1-server</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>

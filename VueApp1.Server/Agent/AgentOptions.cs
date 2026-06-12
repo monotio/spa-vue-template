@@ -135,12 +135,17 @@ public sealed class AgentOptionsValidator(IServiceProvider serviceProvider) : IV
                         + "See docs/AGENT.md.");
                 }
             }
-            catch (InvalidOperationException exception)
+            catch (Exception exception) when (exception is not OutOfMemoryException)
             {
                 // AgentChatClientFactory's fail-fast (no API key for the
                 // selected provider, blanked model name) surfaces during the
-                // resolve above; report it as the validation failure so boot
-                // dies with the factory's precise, actionable message.
+                // resolve above as InvalidOperationException — but a cloner's
+                // pre-registered IChatClient may throw anything from its own
+                // factory. Every resolution failure here is a boot-blocking
+                // wiring problem, so the catch is deliberately wide: report
+                // it through the aggregated ValidateOptionsResult (keeping
+                // any other queued failures visible) instead of aborting
+                // validation with a raw exception.
                 failures.Add(exception.Message);
             }
         }

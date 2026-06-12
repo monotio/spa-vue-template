@@ -44,6 +44,12 @@ export ANTHROPIC_API_KEY=sk-ant-...   # or OPENAI_API_KEY + Agent:Provider=opena
 npm run dev:server
 ```
 
+Optional endpoint overrides: `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL`
+(same `IConfiguration` lookup as the keys) repoint the SDKs at a gateway or
+proxy. The integration tests use them as a structural no-network guard —
+the provider-boot factories aim the real adapters at an unroutable loopback
+address, so no test can ever call out with a fake key.
+
 Tests need none of this: a pre-registered `IChatClient` (the scripted
 `FakeChatClient`) replaces the factory wholesale — last DI registration
 wins — which is also the hook for plugging in any other provider's MEAI
@@ -216,10 +222,13 @@ flag-matrix test). The loop dispatches through the SDK's only public seam:
   parse→re-serialize.
 
 Treat `ModelContextProtocol.*`, `Microsoft.Extensions.AI.*`, `Anthropic`
-and `OpenAI` Dependabot bumps as protocol upgrades: run `AgentEndpointTests`
-(the McpEndpointTests precedent) — the bridge and provider-boot tests fail
-loudly if an SDK moves under us — and after provider bumps, run the manual
-smoke recipe (Providers section) for the fidelity claims CI cannot see.
+and `OpenAI` Dependabot bumps as protocol upgrades: run every Agent suite —
+`npm run test:backend -- --filter "FullyQualifiedName~Agent"` covers
+`AgentEndpointTests` (the McpEndpointTests precedent) AND the
+`AgentChatClientFactoryTests` adapter-metadata tripwires (`ProviderName`,
+`DefaultModelId`), which are designed to fail loudly if an SDK renames its
+adapter surface — and after provider bumps, run the manual smoke recipe
+(Providers section) for the fidelity claims CI cannot see.
 
 (For consuming *external* MCP servers, `McpClientTool : AIFunction` over an
 HTTP/stdio client transport is the right mechanism — the in-process bridge

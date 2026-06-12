@@ -90,6 +90,39 @@ public class AgentChatClientFactoryTests
         Assert.Equal(expected, client.GetService<ChatClientMetadata>()?.ProviderName);
     }
 
+    // -- Endpoint overrides ----------------------------------------------------
+
+    [Theory]
+    [InlineData(
+        "anthropic",
+        AgentChatClientFactory.AnthropicApiKeyName,
+        AgentChatClientFactory.AnthropicBaseUrlName)]
+    [InlineData(
+        "openai",
+        AgentChatClientFactory.OpenAIApiKeyName,
+        AgentChatClientFactory.OpenAIBaseUrlName)]
+    public void BaseUrlOverride_FlowsIntoTheAdapter(string provider, string keyName, string baseUrlName)
+    {
+        // The seam the integration tests' provider-boot factories rely on for
+        // their structural no-network guard (and what a gateway/proxy user
+        // sets in production): the standard *_BASE_URL name repoints the SDK.
+        var configuration = BuildConfiguration(new()
+        {
+            [keyName] = "test-key-not-real",
+            [baseUrlName] = "https://127.0.0.1:9/gateway",
+        });
+
+        using var client = AgentChatClientFactory.Create(
+            new AgentOptions { Provider = provider }, configuration);
+
+        var metadata = client.GetService<ChatClientMetadata>();
+        Assert.NotNull(metadata);
+        Assert.Contains(
+            "127.0.0.1",
+            metadata.ProviderUri?.ToString() ?? string.Empty,
+            StringComparison.Ordinal);
+    }
+
     // -- Fail-fast matrix ------------------------------------------------------
 
     [Fact]

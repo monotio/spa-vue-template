@@ -1,3 +1,4 @@
+using System.ClientModel;
 using Anthropic;
 using Microsoft.Extensions.AI;
 using OpenAI;
@@ -41,6 +42,17 @@ public static class AgentChatClientFactory
     public const string OpenAIApiKeyName = "OPENAI_API_KEY";
 
     /// <summary>
+    /// Optional endpoint overrides under the SDKs' standard env-var names,
+    /// resolved through the same <see cref="IConfiguration"/> lookup as the
+    /// keys. Point them at a gateway/proxy — or, as the integration tests'
+    /// provider-boot factories do, at an unroutable loopback address so any
+    /// accidental provider call fails instantly instead of leaving the
+    /// machine. Unset means each SDK's production endpoint.
+    /// </summary>
+    public const string AnthropicBaseUrlName = "ANTHROPIC_BASE_URL";
+    public const string OpenAIBaseUrlName = "OPENAI_BASE_URL";
+
+    /// <summary>
     /// Builds the provider-backed <see cref="IChatClient"/>. Construction is
     /// offline — no network until the loop's first
     /// <c>GetStreamingResponseAsync</c> — so this is safe to run (and the
@@ -66,21 +78,31 @@ public static class AgentChatClientFactory
     {
         var apiKey = RequireApiKey(configuration, AnthropicApiKeyName, "anthropic");
         var model = RequireModel(options.Anthropic.Model, "Agent:Anthropic:Model");
+        var baseUrl = configuration[AnthropicBaseUrlName];
 
         // The official Anthropic-authored SDK's native MEAI adapter. The key
         // is passed explicitly (not left to the SDK's lazy env resolution) so
         // a missing key fails above, at boot, with our message.
-        return new AnthropicClient { ApiKey = apiKey }.AsIChatClient(model);
+        var client = string.IsNullOrWhiteSpace(baseUrl)
+            ? new AnthropicClient { ApiKey = apiKey }
+            : new AnthropicClient { ApiKey = apiKey, BaseUrl = baseUrl };
+        return client.AsIChatClient(model);
     }
 
     private static IChatClient CreateOpenAI(AgentOptions options, IConfiguration configuration)
     {
         var apiKey = RequireApiKey(configuration, OpenAIApiKeyName, "openai");
         var model = RequireModel(options.OpenAI.Model, "Agent:OpenAI:Model");
+        var baseUrl = configuration[OpenAIBaseUrlName];
 
         // Official OpenAI SDK → Chat Completions client for the configured
         // model → Microsoft.Extensions.AI.OpenAI adapter over it.
-        return new OpenAIClient(apiKey).GetChatClient(model).AsIChatClient();
+        var client = string.IsNullOrWhiteSpace(baseUrl)
+            ? new OpenAIClient(apiKey)
+            : new OpenAIClient(
+                new ApiKeyCredential(apiKey),
+                new OpenAIClientOptions { Endpoint = new Uri(baseUrl) });
+        return client.GetChatClient(model).AsIChatClient();
     }
 
     /// <summary>
