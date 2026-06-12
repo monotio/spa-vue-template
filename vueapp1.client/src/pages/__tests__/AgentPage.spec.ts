@@ -29,7 +29,11 @@ const agentMock = createMockedComposable(() => {
     }),
     isRestoring: ref(false),
     isStreaming: computed(() => status.value === 'streaming'),
-    sendMessage: vi.fn(() => Promise.resolve()),
+    // Typed so tests can inspect mock.calls — the page re-wraps extension-only
+    // files, so toHaveBeenCalledWith(file) identity checks don't fit that case.
+    sendMessage: vi.fn<(text: string, files?: readonly File[]) => Promise<void>>(() =>
+      Promise.resolve(),
+    ),
     approve: vi.fn(() => Promise.resolve()),
     reject: vi.fn(() => Promise.resolve()),
     abort: vi.fn(),
@@ -145,6 +149,47 @@ describe('AgentPage', () => {
     const error = wrapper.get('[data-testid="attachment-error"]');
     expect(error.text()).toContain('exceeds');
     expect(error.text()).toContain('unsupported');
+    expect(wrapper.find('[data-testid="pending-attachments"]').exists()).toBe(false);
+  });
+
+  it('falls back to the file extension when the browser leaves file.type empty', async () => {
+    const state = agentMock.mock();
+    const wrapper = mount(AgentPage);
+    // Browsers report an empty MIME type for extensions outside their
+    // registry (.md is the common casualty): the composer must map the
+    // extension onto the mirrored allowlist instead of rejecting the file.
+    const noType = new File(['# notes'], 'notes.md', { type: '' });
+
+    const input = wrapper.get('input[type="file"]');
+    Object.defineProperty(input.element, 'files', { value: [noType], configurable: true });
+    await input.trigger('change');
+
+    expect(wrapper.find('[data-testid="attachment-error"]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid="pending-attachments"]').text()).toContain('notes.md');
+
+    await wrapper.get('#agent-message').setValue('summarize this');
+    await wrapper.get('form').trigger('submit');
+
+    // The multipart part's Content-Type comes from File.type — an empty
+    // type would reach the server as application/octet-stream and 415, so
+    // the page re-wraps the file with the inferred media type.
+    expect(state.sendMessage).toHaveBeenCalledTimes(1);
+    const sentFiles = state.sendMessage.mock.calls[0]?.[1] ?? [];
+    expect(sentFiles).toHaveLength(1);
+    expect(sentFiles[0]?.name).toBe('notes.md');
+    expect(sentFiles[0]?.type).toBe('text/markdown');
+  });
+
+  it('still rejects an unknown extension when file.type is empty', async () => {
+    agentMock.mock();
+    const wrapper = mount(AgentPage);
+    const unknown = new File(['x'], 'firmware.xyz', { type: '' });
+
+    const input = wrapper.get('input[type="file"]');
+    Object.defineProperty(input.element, 'files', { value: [unknown], configurable: true });
+    await input.trigger('change');
+
+    expect(wrapper.get('[data-testid="attachment-error"]').text()).toContain('unsupported');
     expect(wrapper.find('[data-testid="pending-attachments"]').exists()).toBe(false);
   });
 

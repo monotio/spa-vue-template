@@ -1,5 +1,6 @@
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
+using ModelContextProtocol.Server;
 using VueApp1.Server.Agent.Skills;
 
 namespace VueApp1.Server.Agent;
@@ -260,6 +261,24 @@ public sealed class AgentOptionsValidator(IServiceProvider serviceProvider) : IV
             catch (Exception exception) when (exception is not OutOfMemoryException)
             {
                 failures.Add(exception.Message);
+            }
+
+            foreach (var tool in serviceProvider.GetServices<McpServerTool>())
+            {
+                // The loop dispatches these names itself, before the policy
+                // lookup — an McpServerTool under a reserved name would be
+                // silently shadowed for the agent (annotations ignored,
+                // handler never invoked) yet still served to external /mcp
+                // clients. Reject the split brain at boot; flag-off
+                // deployments may name external-only tools freely.
+                if (AgentLoopService.LoopReservedToolNames.Contains(tool.ProtocolTool.Name))
+                {
+                    failures.Add(
+                        $"McpServerTool '{tool.ProtocolTool.Name}' uses a tool name reserved by the "
+                        + "agent loop (it is dispatched in AgentLoopService before AgentToolPolicy, "
+                        + "so the MCP tool would be silently shadowed for the agent while external "
+                        + "/mcp clients still see it). Rename the tool. See docs/AGENT.md \"Skills\".");
+                }
             }
         }
 

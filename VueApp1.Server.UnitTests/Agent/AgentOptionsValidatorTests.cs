@@ -1,6 +1,8 @@
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
+using ModelContextProtocol.Server;
 using VueApp1.Server.Agent;
+using VueApp1.Server.Agent.Skills;
 using Xunit;
 
 namespace VueApp1.Server.UnitTests.Agent;
@@ -62,6 +64,67 @@ public class AgentOptionsValidatorTests
             Assert.Contains(
                 result.Failures!,
                 failure => failure.Contains("IChatClient", StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
+    public void Enabled_McpServerToolNamedLoadSkill_FailsAsLoopReserved()
+    {
+        // The loop dispatches load_skill ITSELF, before consulting
+        // AgentToolPolicy — an McpServerTool registered under that name would
+        // be silently shadowed for the agent (annotations ignored, handler
+        // never invoked) while still being served verbatim to external /mcp
+        // clients. A split-brain tool is a boot failure, not a surprise.
+        var services = new ServiceCollection();
+        services.AddSingleton(McpServerTool.Create(
+            () => "ok",
+            new McpServerToolCreateOptions
+            {
+                Name = FileSystemSkillCatalog.LoadSkillToolName,
+                Description = "imposter tool — registered ONLY in this test",
+                ReadOnly = true,
+                Destructive = false,
+            }));
+        var validator = BuildValidator(services, out var provider);
+        using (provider)
+        {
+            var result = validator.Validate(name: null, new AgentOptions { Enabled = true });
+
+            Assert.True(result.Failed);
+            Assert.Contains(
+                result.Failures!,
+                failure => failure.Contains("load_skill", StringComparison.Ordinal)
+                    && failure.Contains("reserved", StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
+    public void Disabled_McpServerToolNamedLoadSkill_PassesValidation()
+    {
+        // Flag off there is no loop to shadow: a deployment running ONLY the
+        // external MCP server may name its tools whatever it likes.
+        var services = new ServiceCollection();
+        services.AddSingleton(McpServerTool.Create(
+            () => "ok",
+            new McpServerToolCreateOptions
+            {
+                Name = FileSystemSkillCatalog.LoadSkillToolName,
+                Description = "imposter tool — registered ONLY in this test",
+                ReadOnly = true,
+                Destructive = false,
+            }));
+        var validator = BuildValidator(services, out var provider);
+        using (provider)
+        {
+            var options = new AgentOptions
+            {
+                Enabled = false,
+                Attachments = new AgentAttachmentOptions { AllowedContentTypes = ["image/png"] },
+            };
+
+            var result = validator.Validate(name: null, options);
+
+            Assert.True(result.Succeeded);
         }
     }
 

@@ -45,7 +45,8 @@ provisions everything.
 | CI/CD | SHA-pinned actions, CodeQL (C# + TS), OpenSSF Scorecard, dependency review, PR-title lint, build provenance attestations, tuned Dependabot (grouped minors, solo majors, cooldowns), Windows leg on main |
 | Testing | xUnit v3 (unit + WebApplicationFactory integration), coverage gates, test wrappers with disk logs + signal-safe exits, anti-flake doctrine |
 | Agentic dev | `AGENTS.md` playbook (Claude Code reads it via `CLAUDE.md`), committed `.claude/` settings/hooks/skills with a cross-runtime `.agents/` mirror, browser-verification skill, opt-in [MCP server](docs/MCP.md) over the existing service layer, opt-in ast-grep guardrails, one-command setup, zero-secret boot |
-| Docs | Decision guides for [auth](docs/AUTH.md), [database](docs/DATA.md), [background work](docs/BACKGROUND.md), [styling](docs/STYLING.md), [realtime](docs/REALTIME.md); [LLM-feature discipline](docs/AI.md); deep dives for [testing](docs/TESTING.md), [frontend](docs/FRONTEND.md), [API](docs/API.md), [config](docs/CONFIG.md), [patterns](docs/PATTERNS.md), [MCP](docs/MCP.md) |
+| Agent loop (opt-in) | A visible, hand-rolled agent harness behind `Agent:Enabled=false` ([docs/AGENT.md](docs/AGENT.md)): SSE-streamed tool-calling turns over `IChatClient`, in-process dispatch of the same MCP tool registry, human approval for write/destructive tools, SKILL.md skills with progressive disclosure, file attachments with hydrate-on-replay, a per-call cost ledger with budgets and `GET /api/agent/usage`, Anthropic + OpenAI out of the box, streaming chat showcase at `/agent` — tested entirely offline (zero secrets) |
+| Docs | Decision guides for [auth](docs/AUTH.md), [database](docs/DATA.md), [background work](docs/BACKGROUND.md), [styling](docs/STYLING.md), [realtime](docs/REALTIME.md); [LLM-feature discipline](docs/AI.md); deep dives for [testing](docs/TESTING.md), [frontend](docs/FRONTEND.md), [API](docs/API.md), [config](docs/CONFIG.md), [patterns](docs/PATTERNS.md), [MCP](docs/MCP.md), [agent module](docs/AGENT.md) |
 
 ## Architecture
 
@@ -107,8 +108,12 @@ not always-on code:
 - **No realtime transport** → [docs/REALTIME.md](docs/REALTIME.md): SSE vs
   SignalR vs WebSocket decision table; .NET 10 native SSE is the
   zero-dependency default.
-- **No LLM plumbing** → [docs/AI.md](docs/AI.md): the prompt-discipline,
-  injection-defence, and eval rules to adopt with your first AI feature.
+- **LLM plumbing is opt-in, not absent** → the agent harness ships
+  flag-off ([docs/AGENT.md](docs/AGENT.md)) and its decision guide covers
+  when to own the loop vs `UseFunctionInvocation` vs Agent Framework vs
+  hosted managed-agent offerings; [docs/AI.md](docs/AI.md) keeps the
+  day-one prompt-discipline, injection-defence, and eval rules that apply
+  either way.
 - **No husky/lint-staged** → CI is the gate; the one git hook is pre-push
   branch protection. No `packageManager`/corepack (npm-only; corepack left
   Node ≥25).
