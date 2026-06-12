@@ -37,7 +37,39 @@ const pendingFiles = ref<File[]>([]);
 const attachmentError = ref('');
 const fileInput = useTemplateRef('fileInput');
 
-const acceptedTypes = AGENT_ATTACHMENT_LIMITS.allowedContentTypes.join(',');
+// Browsers report an EMPTY File.type for extensions outside their MIME
+// registry (.md is the common casualty, .txt on some platforms). The
+// fallback maps known extensions onto the SAME mirrored allowlist — never
+// beyond it — and the picked file is re-wrapped so the multipart part
+// carries the inferred type: an empty type would upload as
+// application/octet-stream and bounce off the server's 415 allowlist.
+const EXTENSION_MEDIA_TYPES: Readonly<Record<string, string>> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  pdf: 'application/pdf',
+  txt: 'text/plain',
+  md: 'text/markdown',
+  markdown: 'text/markdown',
+};
+
+function withMediaType(file: File): File {
+  if (file.type !== '') {
+    return file; // never second-guess a browser-provided type
+  }
+  const extension = file.name.slice(file.name.lastIndexOf('.') + 1).toLowerCase();
+  const inferred = EXTENSION_MEDIA_TYPES[extension];
+  return inferred === undefined ? file : new File([file], file.name, { type: inferred });
+}
+
+// The extension list rides along in `accept`: OS pickers that know no MIME
+// type for .md/.txt would otherwise grey those files out entirely.
+const acceptedTypes = [
+  ...AGENT_ATTACHMENT_LIMITS.allowedContentTypes,
+  ...Object.keys(EXTENSION_MEDIA_TYPES).map((extension) => `.${extension}`),
+].join(',');
 const atAttachmentCap = computed(
   () => pendingFiles.value.length >= AGENT_ATTACHMENT_LIMITS.maxPerMessage,
 );
@@ -48,7 +80,7 @@ function openFilePicker(): void {
 
 function onFilesPicked(event: Event): void {
   const input = event.target as HTMLInputElement;
-  const picked = input.files === null ? [] : Array.from(input.files);
+  const picked = input.files === null ? [] : Array.from(input.files, withMediaType);
   // Allow re-picking the same file after a removal or a rejected pick.
   input.value = '';
   const rejections: string[] = [];
