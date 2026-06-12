@@ -27,7 +27,7 @@ fast with a message saying exactly that).
 | --- | --- |
 | `POST /api/agent/conversations/{id}/turns` | one agent request, streamed as SSE parts; `Idempotency-Key` honored (in-flight duplicate suppression); `long-running` timeout policy |
 | `POST /api/agent/conversations/{id}/approvals/{toolCallId}` | `{approved, reason?}` → executes/rejects the frozen call and resumes the loop as SSE on this response |
-| `GET /api/agent/conversations/{id}` | canonical replay — completed parts derived from the transcript via the same mapper the live stream uses |
+| `GET /api/agent/conversations/{id}` | canonical replay — completed parts derived from the transcript via the same mapper the live stream uses; unknown id → 404 typed `agent-conversation-not-found` (a TYPELESS 404 on the same URL means the module is disabled — the client's setup callout branches on that difference) |
 | `GET /api/agent/usage` | the visible-spend ledger summary |
 
 All endpoints are `ExcludeFromDescription`: a flag-gated surface must never
@@ -148,6 +148,16 @@ exists). Approve executes the FROZEN arguments; reject appends a
 model-visible `approval_rejected` envelope so the model learns the human
 said no (and why) instead of seeing an unanswered call.
 
+**Double-execution proofing** (concurrent approval POSTs — a double-click, a
+proxy retry): the pending and its hash are re-validated **under the
+one-active-turn lock** (the pre-lock checks are only a cheap fast-reject;
+between them and the lock acquisition a competing resume can run to
+completion), and the store's `RemovePendingApproval` is the **atomic consume
+gate** — if the pending was already consumed, the frozen args are never
+executed a second time. A turn stream is also single-enumeration by
+contract: it owns the turn lock from creation, so a second enumeration
+throws instead of re-running provider/tool calls outside the lock.
+
 The `{approved, reason}` DTO mirrors MEAI's `ToolApprovalResponseContent`
 shape, so migrating to middleware approvals later is mechanical.
 
@@ -192,7 +202,7 @@ error flag).
 - **Reasoning round-trip:** `TextReasoningContent.ProtectedData` is MEAI's
   opaque provider-roundtrip slot (thinking signatures, encrypted reasoning).
   Rule: *nothing outside the provider adapters ever reads ProtectedData.*
-- **Provider switch (P5-lite):** assistant messages are stamped
+- **Provider switch:** assistant messages are stamped
   `agent.provider`; reasoning content from a DIFFERENT provider is stripped
   on the way into a request (a switch closes the reasoning-replay window).
   The full contiguous-tail window + sticky parse-failure suppression is the

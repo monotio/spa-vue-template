@@ -254,6 +254,89 @@ public class AgentLoopServiceTests
     }
 
     [Fact]
+    public async Task Approval_PendingConsumedBeforeEnumeration_NeverExecutesTwice()
+    {
+        // The TOCTOU window: TryStartApprovalTurn validated the pending, but
+        // by the time the resume stream actually runs, another request (a
+        // double-click, a proxy retry) already consumed it. The store
+        // removal is the atomic consume gate — losing it must mean the
+        // frozen args do NOT run a second time.
+        List<string> executed = [];
+        using var harness = new Harness(
+            new AgentOptions(),
+            DestructiveTool("delete_item", executed.Add));
+        harness.Client.Enqueue(FakeChatClient.ToolCall(
+            "call-9", "delete_item", new Dictionary<string, object?> { ["target"] = "x42" }));
+
+        await DrainAsync(harness.StartTurn("delete x42", TestContext.Current.CancellationToken));
+        var resume = harness.Loop.TryStartApprovalTurn(
+            ConversationId, "call-9", new AgentApprovalRequest(Approved: true),
+            user: null, TestContext.Current.CancellationToken);
+        Assert.Equal(AgentTurnStartStatus.Started, resume.Status);
+
+        // A competing path consumes the pending before this stream runs.
+        harness.Store.RemovePendingApproval(ConversationId, "call-9");
+
+        var parts = await DrainAsync(resume.Stream!);
+
+        Assert.Empty(executed); // the frozen call must not run again
+        Assert.DoesNotContain(parts, part => part is ToolOutputAvailablePart);
+        Assert.Contains(parts, part => part is ErrorPart);
+        // The refusal still released the turn lock.
+        Assert.True(harness.Store.TryBeginTurn(ConversationId));
+    }
+
+    [Fact]
+    public void Approval_PendingConsumedBetweenValidationAndLock_IsNotFound()
+    {
+        // The cross-request race: request B passes the pre-lock validation,
+        // request A's whole resume completes, THEN B acquires the turn lock.
+        // The post-lock re-validation must observe the consumed pending and
+        // refuse — never hand B a runnable stream for already-executed args.
+        List<string> executed = [];
+        var store = new VanishingPendingStore();
+        using var harness = new Harness(
+            new AgentOptions(), store,
+            DestructiveTool("delete_item", executed.Add));
+        store.AddPendingApproval(ConversationId, new PendingApproval(
+            "call-1", "delete_item",
+            new FunctionCallContent("call-1", "delete_item", new Dictionary<string, object?> { ["target"] = "x" }),
+            "{}",
+            harness.Policy.PolicySurfaceHash,
+            Guid.NewGuid()));
+        store.VanishOnNextBeginTurn = "call-1";
+
+        var result = harness.Loop.TryStartApprovalTurn(
+            ConversationId, "call-1", new AgentApprovalRequest(Approved: true),
+            user: null, TestContext.Current.CancellationToken);
+
+        Assert.Equal(AgentTurnStartStatus.ApprovalNotFound, result.Status);
+        Assert.Empty(executed);
+        // The refusal path released the lock it briefly held.
+        Assert.True(store.TryBeginTurn(ConversationId));
+    }
+
+    [Fact]
+    public async Task TurnStream_SecondEnumerationThrows_InsteadOfRunningUnlocked()
+    {
+        using var harness = new Harness(new AgentOptions());
+        harness.Client.Enqueue(FakeChatClient.Text("hi"));
+
+        var start = harness.Loop.TryStartTurn(
+            ConversationId, new AgentTurnRequest("one"), user: null, TestContext.Current.CancellationToken);
+        await DrainAsync(start.Stream!);
+
+        // A second enumeration would re-run the whole turn WITHOUT the
+        // conversation lock (and its finally would release a lock another
+        // request may hold) — it must throw, not run.
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => DrainAsync(start.Stream!));
+        Assert.Contains("once", exception.Message, StringComparison.OrdinalIgnoreCase);
+        // The refusal did not corrupt the lock state.
+        Assert.True(harness.Store.TryBeginTurn(ConversationId));
+    }
+
+    [Fact]
     public void Approval_PolicySurfaceDivergence_FailsClosed()
     {
         using var harness = new Harness(
@@ -372,25 +455,76 @@ public class AgentLoopServiceTests
         return parts;
     }
 
+    /// <summary>
+    /// Deterministic stand-in for the race window: the pending approval
+    /// "vanishes" exactly when the turn lock is acquired — as if a competing
+    /// resume consumed it between this request's pre-lock validation and its
+    /// lock acquisition.
+    /// </summary>
+    private sealed class VanishingPendingStore : IAgentConversationStore
+    {
+        private readonly InMemoryAgentConversationStore _inner = new();
+
+        public string? VanishOnNextBeginTurn { get; set; }
+
+        public bool TryBeginTurn(string conversationId)
+        {
+            if (!_inner.TryBeginTurn(conversationId))
+            {
+                return false;
+            }
+
+            if (VanishOnNextBeginTurn is { } toolCallId)
+            {
+                VanishOnNextBeginTurn = null;
+                _inner.RemovePendingApproval(conversationId, toolCallId);
+            }
+
+            return true;
+        }
+
+        public bool Exists(string conversationId) => _inner.Exists(conversationId);
+        public IReadOnlyList<ChatMessage> GetMessages(string conversationId) => _inner.GetMessages(conversationId);
+        public void AppendMessages(string conversationId, IReadOnlyList<ChatMessage> messages) =>
+            _inner.AppendMessages(conversationId, messages);
+        public void EndTurn(string conversationId) => _inner.EndTurn(conversationId);
+        public void AddPendingApproval(string conversationId, PendingApproval approval) =>
+            _inner.AddPendingApproval(conversationId, approval);
+        public PendingApproval? GetPendingApproval(string conversationId, string toolCallId) =>
+            _inner.GetPendingApproval(conversationId, toolCallId);
+        public bool RemovePendingApproval(string conversationId, string toolCallId) =>
+            _inner.RemovePendingApproval(conversationId, toolCallId);
+        public IReadOnlyList<PendingApproval> GetPendingApprovals(string conversationId) =>
+            _inner.GetPendingApprovals(conversationId);
+    }
+
     private sealed class Harness : IDisposable
     {
         private readonly ServiceProvider _provider;
 
         public Harness(AgentOptions options, params McpServerTool[] tools)
+            : this(options, new InMemoryAgentConversationStore(), tools)
         {
+        }
+
+        public Harness(AgentOptions options, IAgentConversationStore store, params McpServerTool[] tools)
+        {
+            Store = store;
             _provider = new ServiceCollection().BuildServiceProvider();
             var wrapped = Options.Create(options);
             var adapter = new McpToolAdapter(_provider, NullLoggerFactory.Instance);
-            var policy = new AgentToolPolicy(tools, adapter, wrapped);
+            Policy = new AgentToolPolicy(tools, adapter, wrapped);
             Ledger = new AgentUsageLedger(wrapped, TimeProvider.System);
             Loop = new AgentLoopService(
-                Client, policy, Store, Ledger, wrapped, _provider,
+                Client, Policy, Store, Ledger, wrapped, _provider,
                 NullLogger<AgentLoopService>.Instance);
         }
 
         public FakeChatClient Client { get; } = new();
 
-        public InMemoryAgentConversationStore Store { get; } = new();
+        public IAgentConversationStore Store { get; }
+
+        public AgentToolPolicy Policy { get; }
 
         public AgentUsageLedger Ledger { get; }
 

@@ -113,6 +113,15 @@ public static class AgentFinishReasons
     public const string BudgetExceeded = "budget-exceeded";
     public const string ApprovalRequired = "approval-required";
     public const string Cancelled = "cancelled";
+
+    /// <summary>
+    /// Detached-only outcome of <c>RunDetachedTurnAsync</c>: the conversation
+    /// already had an active turn, so nothing ran and nothing was billed.
+    /// Never emitted on the SSE wire (the HTTP path surfaces the same
+    /// condition as a 409 before any stream starts) — a scheduler/sweeper
+    /// branches on it to retry later.
+    /// </summary>
+    public const string TurnInProgress = "turn-in-progress";
 }
 
 // ---------------------------------------------------------------------------
@@ -148,7 +157,7 @@ public sealed record AgentMessageSnapshot(string Role, IReadOnlyList<AgentStream
 /// </summary>
 public static class AgentUiParts
 {
-    /// <summary>Stamp key for the provider that produced an assistant message (P5-lite).</summary>
+    /// <summary>Stamp key for the provider that produced an assistant message (drives the provider-switch reasoning strip).</summary>
     public const string ProviderStampKey = "agent.provider";
 
     /// <summary>Stamp key for the request (turn) a message belongs to.</summary>

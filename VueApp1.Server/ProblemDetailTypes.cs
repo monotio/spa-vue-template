@@ -40,4 +40,12 @@ public static class ProblemDetailTypes
 
     /// <summary>No pending approval matches this tool call id (404).</summary>
     public const string AgentApprovalNotFound = "/problems/agent-approval-not-found";
+
+    /// <summary>
+    /// No agent conversation with this id exists (404). Typed so clients can
+    /// distinguish it from the TYPELESS 404 the same URL answers with when
+    /// the agent module is disabled (the /api fallback) — the frontend's
+    /// disabled-state callout branches on exactly that difference.
+    /// </summary>
+    public const string AgentConversationNotFound = "/problems/agent-conversation-not-found";
 }

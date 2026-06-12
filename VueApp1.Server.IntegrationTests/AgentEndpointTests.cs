@@ -147,6 +147,28 @@ public class AgentEndpointTests(IntegrationTestWebApplicationFactory factory)
     }
 
     [Fact]
+    public async Task FlagOn_OpenApiDocumentStillContainsNoAgentPaths()
+    {
+        // The committed OpenAPI contract is generated flag-off; this pins the
+        // OTHER half of the byte-stability invariant: an Agent:Enabled boot
+        // must not surface /api/agent/* either (the group-level
+        // ExcludeFromDescription is load-bearing, not decorative).
+        var chatClient = new FakeChatClient();
+        using var agentFactory = CreateAgentFactory(
+            chatClient, builder => builder.UseSetting("OpenApi:Enabled", "true"));
+        using var httpClient = agentFactory.CreateClient();
+        using var cts = CreateRequestCts();
+
+        var payload = await httpClient.GetStringAsync("/openapi/v1.json", cts.Token);
+        using var document = JsonDocument.Parse(payload);
+        Assert.All(
+            document.RootElement.GetProperty("paths").EnumerateObject(),
+            path => Assert.False(
+                path.Name.StartsWith("/api/agent", StringComparison.OrdinalIgnoreCase),
+                $"'{path.Name}' leaked into the OpenAPI document from a flag-on boot."));
+    }
+
+    [Fact]
     public async Task FlagOff_AgentEndpointsAnswerWithTheApi404Contract()
     {
         // The default factory: Agent:Enabled=false from appsettings.json.
@@ -259,6 +281,103 @@ public class AgentEndpointTests(IntegrationTestWebApplicationFactory factory)
         var resetAtUtc = problem.GetProperty("resetAtUtc").GetDateTimeOffset();
         Assert.True(resetAtUtc > TimeProvider.System.GetUtcNow().AddMinutes(-1));
         Assert.Equal(TimeSpan.Zero, resetAtUtc.Offset);
+    }
+
+    // -- Idempotency-Key on the turn POST (IdempotencyEndpointFilter) ------------
+    //
+    // The stream-aware billing guard: a network-level retry while the original
+    // stream is running must get 409, never a second billable generation. The
+    // filter deliberately NEVER commits (a stream cannot be replayed from a
+    // cache record), so a completed or aborted key is fresh again — replay
+    // protection for streams is the in-flight window only, by design. The
+    // payload-mismatch (422) and cached-replay branches need a committed
+    // record, which this endpoint never writes — they are pinned at the unit
+    // level in IdempotencyEndpointFilterTests.
+
+    [Fact]
+    public async Task IdempotencyKey_RetryWhileStreamInFlight_Gets409NotASecondGeneration()
+    {
+        var chatClient = new FakeChatClient()
+            .EnqueueHangingAfter(FakeChatClient.Text("streaming..."));
+        using var agentFactory = CreateAgentFactory(chatClient);
+        using var httpClient = agentFactory.CreateClient();
+        using var cts = CreateRequestCts();
+
+        using var first = CreateTurnRequest("conv-idem", "one", idempotencyKey: "key-1");
+        var firstResponse = await httpClient.SendAsync(
+            first, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+        using var reader = new StreamReader(await firstResponse.Content.ReadAsStreamAsync(cts.Token));
+        Assert.NotNull(await ReadNextDataLineAsync(reader, cts.Token)); // stream is live
+
+        using var retry = CreateTurnRequest("conv-idem", "one", idempotencyKey: "key-1");
+        var second = await httpClient.SendAsync(retry, cts.Token);
+
+        // The filter answers BEFORE the handler: the idempotency type, not
+        // agent-turn-in-progress — and the provider saw exactly one call.
+        Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
+        var problem = await ReadProblemAsync(second, cts.Token);
+        Assert.Equal("/problems/idempotency-in-progress", problem.GetProperty("type").GetString());
+        Assert.Single(chatClient.Calls);
+
+        firstResponse.Dispose(); // release the hanging stream
+    }
+
+    [Fact]
+    public async Task IdempotencyKey_IsFreshAgainAfterStreamCompletion_NeverCommits()
+    {
+        var chatClient = new FakeChatClient()
+            .Enqueue(FakeChatClient.Text("first answer"))
+            .Enqueue(FakeChatClient.Text("second answer"));
+        using var agentFactory = CreateAgentFactory(chatClient);
+        using var httpClient = agentFactory.CreateClient();
+        using var cts = CreateRequestCts();
+
+        using var first = CreateTurnRequest("conv-idem-fresh", "same body", idempotencyKey: "key-fresh");
+        using var firstResponse = await httpClient.SendAsync(first, cts.Token);
+        Assert.Equal(HttpStatusCode.OK, firstResponse.StatusCode);
+        await firstResponse.Content.ReadAsStringAsync(cts.Token);
+
+        // The reservation releases when the SERVER finishes the response;
+        // the client observing completion can race that by a moment.
+        using var second = await PostTurnUntilNotConflictAsync(
+            httpClient, "conv-idem-fresh", "same body", "key-fresh", cts.Token);
+
+        // Identical retry after completion EXECUTES again (a second billable
+        // generation): dispose-without-commit left the key fresh.
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        Assert.Equal(2, chatClient.Calls.Count);
+    }
+
+    [Fact]
+    public async Task IdempotencyKey_ReservationReleasesOnClientAbort_KeyNotWedged()
+    {
+        var chatClient = new FakeChatClient()
+            .EnqueueHangingAfter(FakeChatClient.Text("partial"))
+            .Enqueue(FakeChatClient.Text("retry answer"));
+        using var agentFactory = CreateAgentFactory(chatClient);
+        using var httpClient = agentFactory.CreateClient();
+        using var abortCts = CancellationTokenSource.CreateLinkedTokenSource(
+            TestContext.Current.CancellationToken);
+
+        using var first = CreateTurnRequest("conv-idem-abort", "q", idempotencyKey: "key-abort");
+        var firstResponse = await httpClient.SendAsync(
+            first, HttpCompletionOption.ResponseHeadersRead, abortCts.Token);
+        using (var reader = new StreamReader(await firstResponse.Content.ReadAsStreamAsync(abortCts.Token)))
+        {
+            Assert.NotNull(await ReadNextDataLineAsync(reader, abortCts.Token));
+        }
+
+        await abortCts.CancelAsync();
+        firstResponse.Dispose(); // the closed-tab abort
+
+        // RegisterForDisposeAsync ties the reservation to RESPONSE disposal,
+        // not handler return: the abort must release it, or this key answers
+        // 409 until process restart.
+        using var cts = CreateRequestCts();
+        using var retry = await PostTurnUntilNotConflictAsync(
+            httpClient, "conv-idem-abort", "q", "key-abort", cts.Token);
+        Assert.Equal(HttpStatusCode.OK, retry.StatusCode);
+        Assert.Equal(2, chatClient.Calls.Count);
     }
 
     // -- Approval flow ----------------------------------------------------------
@@ -500,6 +619,44 @@ public class AgentEndpointTests(IntegrationTestWebApplicationFactory factory)
             },
             httpClient);
         return await McpClient.CreateAsync(transport, cancellationToken: cancellationToken);
+    }
+
+    private static HttpRequestMessage CreateTurnRequest(
+        string conversationId, string message, string idempotencyKey)
+    {
+        var request = new HttpRequestMessage(
+            HttpMethod.Post, $"/api/agent/conversations/{conversationId}/turns")
+        {
+            Content = JsonContent.Create(new AgentTurnRequest(message)),
+        };
+        request.Headers.Add("Idempotency-Key", idempotencyKey);
+        return request;
+    }
+
+    /// <summary>
+    /// Bounded poll for "the key/turn is free again": the idempotency
+    /// reservation and the turn lock release when the SERVER completes the
+    /// first response, which can lag the client's view of it by a moment.
+    /// </summary>
+    private static async Task<HttpResponseMessage> PostTurnUntilNotConflictAsync(
+        HttpClient httpClient,
+        string conversationId,
+        string message,
+        string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            using var request = CreateTurnRequest(conversationId, message, idempotencyKey);
+            var response = await httpClient.SendAsync(request, cancellationToken);
+            if (response.StatusCode != HttpStatusCode.Conflict)
+            {
+                return response;
+            }
+
+            response.Dispose();
+            await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
+        }
     }
 
     /// <summary>Reads a finished SSE response into its JSON data payloads.</summary>

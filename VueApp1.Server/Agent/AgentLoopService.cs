@@ -9,40 +9,6 @@ using VueApp1.Server.Mcp;
 
 namespace VueApp1.Server.Agent;
 
-public enum AgentToolPosture
-{
-    /// <summary>A human is on the other end: approval-tier calls freeze and wait.</summary>
-    Interactive,
-
-    /// <summary>
-    /// Nobody can click Approve: only read-tier tools are advertised, and an
-    /// approval-tier call gets the <c>not_authorized</c> envelope instead of
-    /// parking the run.
-    /// </summary>
-    Unattended,
-}
-
-public enum AgentTurnStartStatus
-{
-    Started,
-    TurnInProgress,
-    BudgetExceeded,
-    ApprovalNotFound,
-    ApprovalConflict,
-}
-
-/// <summary>
-/// Outcome of trying to start a turn. Guards that must surface as HTTP
-/// statuses (409/429/404) are decided HERE, before any SSE bytes go out — a
-/// stream that starts cannot change its status code.
-/// </summary>
-public sealed record AgentTurnStart(
-    AgentTurnStartStatus Status,
-    IAsyncEnumerable<AgentStreamPart>? Stream = null,
-    DateTimeOffset ResetAtUtc = default);
-
-public sealed record AgentDetachedTurnResult(string FinishReason, string? Text);
-
 /// <summary>
 /// The agent loop, hand-rolled and visible on purpose: every production
 /// non-negotiable — the turn cap with graceful exhaustion, the error-spiral
@@ -79,6 +45,13 @@ public sealed partial class AgentLoopService(
     public static bool IsValidUserMessage(string? message) =>
         !string.IsNullOrWhiteSpace(message) && message.Length <= MaxUserMessageLength;
 
+    /// <summary>
+    /// A <see cref="AgentTurnStartStatus.Started"/> result HOLDS the
+    /// conversation's one-active-turn lock; the matching release lives in the
+    /// returned stream's <c>finally</c>. The caller must enumerate
+    /// <see cref="AgentTurnStart.Stream"/> exactly once — see the contract on
+    /// <see cref="AgentTurnStart"/>.
+    /// </summary>
     public AgentTurnStart TryStartTurn(
         string conversationId,
         AgentTurnRequest request,
@@ -110,9 +83,11 @@ public sealed partial class AgentLoopService(
             AgentTurnStartStatus.Started,
             RunTurnsAsync(
                 conversationId, turnId, userMessage,
-                approvalAction: null, AgentToolPosture.Interactive, user, cancellationToken));
+                approvalAction: null, AgentToolPosture.Interactive, user,
+                new SingleEnumerationGuard(), cancellationToken));
     }
 
+    /// <inheritdoc cref="TryStartTurn"/>
     public AgentTurnStart TryStartApprovalTurn(
         string conversationId,
         string toolCallId,
@@ -121,16 +96,15 @@ public sealed partial class AgentLoopService(
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        // Cheap pre-lock rejection (and 404-over-409 precedence while another
+        // turn streams) — NOT the authoritative gate; that re-check is below,
+        // under the turn lock.
         var pending = store.GetPendingApproval(conversationId, toolCallId);
         if (pending is null)
         {
             return new AgentTurnStart(AgentTurnStartStatus.ApprovalNotFound);
         }
 
-        // B01-A7, fail closed: the approval was granted against a snapshot of
-        // the policy surface (tool names + schemas + tiers + knobs). If that
-        // surface changed since the freeze, the user approved something the
-        // system no longer means — refuse, never execute.
         if (!string.Equals(pending.PolicySurfaceHash, toolPolicy.PolicySurfaceHash, StringComparison.Ordinal))
         {
             return new AgentTurnStart(AgentTurnStartStatus.ApprovalConflict);
@@ -139,6 +113,28 @@ public sealed partial class AgentLoopService(
         if (!store.TryBeginTurn(conversationId))
         {
             return new AgentTurnStart(AgentTurnStartStatus.TurnInProgress);
+        }
+
+        // Re-validate UNDER the one-active-turn lock: between the pre-checks
+        // above and the lock acquisition, a concurrent resume for the same
+        // toolCallId can run to completion (its whole remove → execute → park
+        // sequence takes milliseconds). While we hold the lock nothing else
+        // can consume the pending, so this read is authoritative.
+        pending = store.GetPendingApproval(conversationId, toolCallId);
+        if (pending is null)
+        {
+            store.EndTurn(conversationId);
+            return new AgentTurnStart(AgentTurnStartStatus.ApprovalNotFound);
+        }
+
+        // Fail closed: the approval was granted against a snapshot of the
+        // policy surface (tool names + schemas + tiers + knobs). If that
+        // surface changed since the freeze, the user approved something the
+        // system no longer means — refuse, never execute.
+        if (!string.Equals(pending.PolicySurfaceHash, toolPolicy.PolicySurfaceHash, StringComparison.Ordinal))
+        {
+            store.EndTurn(conversationId);
+            return new AgentTurnStart(AgentTurnStartStatus.ApprovalConflict);
         }
 
         if (ledger.IsDailyBudgetExhausted(out var resetAtUtc))
@@ -153,7 +149,8 @@ public sealed partial class AgentLoopService(
             RunTurnsAsync(
                 conversationId, turnId, userMessage: null,
                 new ApprovalAction(pending, request.Approved, request.Reason),
-                AgentToolPosture.Interactive, user, cancellationToken));
+                AgentToolPosture.Interactive, user,
+                new SingleEnumerationGuard(), cancellationToken));
     }
 
     /// <summary>
@@ -172,7 +169,7 @@ public sealed partial class AgentLoopService(
     {
         if (!store.TryBeginTurn(conversationId))
         {
-            return new AgentDetachedTurnResult("turn-in-progress", null);
+            return new AgentDetachedTurnResult(AgentFinishReasons.TurnInProgress, null);
         }
 
         if (ledger.IsDailyBudgetExhausted(out _))
@@ -191,7 +188,7 @@ public sealed partial class AgentLoopService(
         var text = new StringBuilder();
         await foreach (var part in RunTurnsAsync(
             conversationId, turnId, userMessage, approvalAction: null, posture,
-            user: null, cancellationToken).ConfigureAwait(false))
+            user: null, new SingleEnumerationGuard(), cancellationToken).ConfigureAwait(false))
         {
             switch (part)
             {
@@ -218,8 +215,14 @@ public sealed partial class AgentLoopService(
         ApprovalAction? approvalAction,
         AgentToolPosture posture,
         ClaimsPrincipal? user,
+        SingleEnumerationGuard enumerationGuard,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
+        // BEFORE the try: a second enumeration must throw without running
+        // the finally — its EndTurn would release a lock this enumeration
+        // does not own.
+        enumerationGuard.OnEnumerationStarted();
+
         var agentOptions = options.Value;
         try
         {
@@ -235,6 +238,28 @@ public sealed partial class AgentLoopService(
 
             if (approvalAction is not null)
             {
+                // The ATOMIC consume gate: removal either succeeds exactly
+                // once or the pending was already consumed by another path —
+                // in which case the frozen args must never run again
+                // (defense in depth behind the under-lock re-validation in
+                // TryStartApprovalTurn).
+                if (!store.RemovePendingApproval(conversationId, approvalAction.Pending.ToolCallId))
+                {
+                    yield return new ErrorPart
+                    {
+                        ConversationId = conversationId,
+                        TurnId = turnId,
+                        Problem = new AgentProblem(
+                            Type: null,
+                            Title: "Approval already resolved",
+                            Status: StatusCodes.Status409Conflict,
+                            Detail: "This tool call's approval was already consumed by another request; "
+                                + "the frozen call was not executed again."),
+                    };
+                    yield return Finish(AgentFinishReasons.Stop);
+                    yield break;
+                }
+
                 var (resultMessage, outputPart) = await ExecuteApprovalActionAsync(
                     conversationId, turnId, approvalAction, user, cancellationToken).ConfigureAwait(false);
                 messages.Add(resultMessage);
@@ -507,8 +532,9 @@ public sealed partial class AgentLoopService(
         ClaimsPrincipal? user,
         CancellationToken cancellationToken)
     {
+        // The caller (RunTurnsAsync) already consumed the pending via the
+        // atomic RemovePendingApproval gate; this method only executes.
         var pending = action.Pending;
-        store.RemovePendingApproval(conversationId, pending.ToolCallId);
 
         McpToolCallOutcome outcome;
         if (!action.Approved)
@@ -638,12 +664,12 @@ public sealed partial class AgentLoopService(
     }
 
     /// <summary>
-    /// P5-lite: reasoning content is provider-private (thinking signatures,
-    /// encrypted reasoning in <c>ProtectedData</c>) — replaying one
-    /// provider's blobs to another corrupts the exchange. A provider switch
-    /// closes the reasoning-replay window: assistant messages stamped with a
-    /// DIFFERENT provider lose their reasoning content on the way into the
-    /// request (the store keeps the original untouched).
+    /// Provider-switch reasoning strip: reasoning content is provider-private
+    /// (thinking signatures, encrypted reasoning in <c>ProtectedData</c>) —
+    /// replaying one provider's blobs to another corrupts the exchange. A
+    /// provider switch closes the reasoning-replay window: assistant messages
+    /// stamped with a DIFFERENT provider lose their reasoning content on the
+    /// way into the request (the store keeps the original untouched).
     /// </summary>
     private static ChatMessage StripForeignReasoning(ChatMessage message, string provider)
     {
@@ -682,87 +708,26 @@ public sealed partial class AgentLoopService(
     private sealed record ApprovalAction(PendingApproval Pending, bool Approved, string? Reason);
 
     /// <summary>
-    /// Streaming state for start/delta/end framing: text and reasoning
-    /// blocks open on their first delta and close when the content kind
-    /// switches (or the response ends). Tool calls and results are atomic
-    /// parts — the adapters do not reliably surface argument deltas, which
-    /// is exactly why <c>tool-input-start/-delta</c> are not in the wire
-    /// union.
+    /// Enforces the single-enumeration contract of a turn stream (see
+    /// <see cref="AgentTurnStart"/>): the conversation's turn lock is taken
+    /// when the stream is CREATED and released by the iterator's
+    /// <c>finally</c>, so a second enumeration would re-run the whole turn
+    /// without the lock — and its <c>finally</c> would release a lock owned
+    /// by someone else. One guard instance is shared by every enumerator the
+    /// returned <c>IAsyncEnumerable</c> produces.
     /// </summary>
-    private sealed class StreamingPartEmitter(string conversationId, Guid turnId)
+    private sealed class SingleEnumerationGuard
     {
-        private BlockKind _open = BlockKind.None;
+        private int _enumerated;
 
-        public IEnumerable<AgentStreamPart> Map(AIContent content)
+        public void OnEnumerationStarted()
         {
-            switch (content)
+            if (Interlocked.Exchange(ref _enumerated, 1) != 0)
             {
-                case TextContent { Text.Length: > 0 } text:
-                    if (_open != BlockKind.Text)
-                    {
-                        foreach (var part in CloseOpenBlocks())
-                        {
-                            yield return part;
-                        }
-
-                        _open = BlockKind.Text;
-                        yield return new TextStartPart { ConversationId = conversationId, TurnId = turnId };
-                    }
-
-                    yield return new TextDeltaPart { ConversationId = conversationId, TurnId = turnId, Delta = text.Text };
-                    break;
-
-                case TextReasoningContent { Text.Length: > 0 } reasoning:
-                    if (_open != BlockKind.Reasoning)
-                    {
-                        foreach (var part in CloseOpenBlocks())
-                        {
-                            yield return part;
-                        }
-
-                        _open = BlockKind.Reasoning;
-                        yield return new ReasoningStartPart { ConversationId = conversationId, TurnId = turnId };
-                    }
-
-                    yield return new ReasoningDeltaPart { ConversationId = conversationId, TurnId = turnId, Delta = reasoning.Text };
-                    break;
-
-                case FunctionCallContent call:
-                    foreach (var part in CloseOpenBlocks())
-                    {
-                        yield return part;
-                    }
-
-                    yield return AgentUiParts.ToolInput(call, conversationId, turnId);
-                    break;
-
-                default:
-                    break;
+                throw new InvalidOperationException(
+                    "An agent turn stream can be enumerated only once: it owns the conversation's "
+                    + "turn lock, and re-running it would execute provider/tool calls outside that lock.");
             }
-        }
-
-        public IEnumerable<AgentStreamPart> CloseOpenBlocks()
-        {
-            switch (_open)
-            {
-                case BlockKind.Text:
-                    _open = BlockKind.None;
-                    yield return new TextEndPart { ConversationId = conversationId, TurnId = turnId };
-                    break;
-                case BlockKind.Reasoning:
-                    _open = BlockKind.None;
-                    yield return new ReasoningEndPart { ConversationId = conversationId, TurnId = turnId };
-                    break;
-                default:
-                    break;
-            }
-        }
-
-        private enum BlockKind
-        {
-            None,
-            Text,
-            Reasoning,
         }
     }
 

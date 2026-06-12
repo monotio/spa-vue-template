@@ -741,6 +741,7 @@ static void MapAgentEndpoints(WebApplication app)
                 return Results.Problem(
                     statusCode: StatusCodes.Status404NotFound,
                     title: "Not Found",
+                    type: ProblemDetailTypes.AgentConversationNotFound,
                     detail: $"No agent conversation '{conversationId}' exists.");
             }
 
