@@ -494,3 +494,18 @@ Providers section. The provider layer itself stays inside that posture:
 `AgentChatClientFactoryTests` and the boot matrix in `AgentEndpointTests`
 construct the real adapters with fake keys and inspect `ChatClientMetadata`
 — no test ever issues a provider call.
+
+### Skills — operational notes
+
+- A successful `load_skill` consumes the single per-request load pass even when
+  the skill was already active (the dedupe acknowledgement counts as the pass);
+  an approval resume starts a fresh request and therefore a fresh pass, bounded
+  by the active-skill cap.
+- `SKILL.md` files are copied with `PreserveNewest`: deleting a skill from
+  source does NOT delete it from `bin/` — run a clean build (or
+  `npm run build-server-shutdown` + rebuild) after removing skills, or a ghost
+  catalog entry survives locally.
+- The L0 catalog block (which mentions `load_skill`) is part of the byte-stable
+  prefix for BOTH postures; in unattended runs the tool itself is stripped, so
+  a model attempting `load_skill` there receives `not_authorized` rather than a
+  silent no-op.
