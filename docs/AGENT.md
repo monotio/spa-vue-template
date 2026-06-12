@@ -546,26 +546,31 @@ When you add persistence, do not create one recurring scheduler job per
 schedule — registrations drift from rows on every edit/delete/restore. Run
 **one sweep** and make the database the single source of truth:
 
-- **Schema sketch** (generic; adapt names):
+- **Schema sketch** (dialect-neutral; adapt names AND types to your
+  provider — in [docs/DATA.md](DATA.md) terms this is two plain EF Core
+  entities):
 
   ```sql
   CREATE TABLE Schedule (
-      Id            INT PRIMARY KEY,
-      Prompt        NVARCHAR(MAX) NOT NULL,  -- plain markdown, NO user templating
-      CronExpression NVARCHAR(64) NULL,
-      NextFireUtc   DATETIME2 NULL,          -- THE source of truth for "due"
-      Paused        BIT NOT NULL DEFAULT 0,
-      FailureStreak INT NOT NULL DEFAULT 0
+      Id             INT PRIMARY KEY,
+      Prompt         TEXT NOT NULL,       -- plain markdown, NO user templating
+      CronExpression VARCHAR(64) NULL,
+      NextFireUtc    TIMESTAMP NULL,      -- THE source of truth for "due"
+      Paused         BOOLEAN NOT NULL DEFAULT FALSE,
+      FailureStreak  INT NOT NULL DEFAULT 0
   );
   CREATE TABLE ScheduleRun (
-      Id              INT PRIMARY KEY,
-      ScheduleId      INT NOT NULL REFERENCES Schedule(Id),
-      ConversationId  NVARCHAR(64) NOT NULL, -- FRESH conversation per run
-      TimeStartedUtc  DATETIME2 NOT NULL,
-      TimeCompletedUtc DATETIME2 NULL,
-      Outcome         NVARCHAR(32) NULL
+      Id               INT PRIMARY KEY,
+      ScheduleId       INT NOT NULL REFERENCES Schedule(Id),
+      ConversationId   VARCHAR(64) NOT NULL, -- FRESH conversation per run
+      TimeStartedUtc   TIMESTAMP NOT NULL,
+      TimeCompletedUtc TIMESTAMP NULL,
+      Outcome          VARCHAR(32) NULL
   );
-  -- Overlap protection lives in the CONSTRAINT, not in status-enum timing:
+  -- Overlap protection lives in the CONSTRAINT, not in status-enum timing.
+  -- The partial/filtered unique index is the one provider-specific piece:
+  -- PostgreSQL and SQLite call it a partial index, SQL Server a filtered
+  -- index; in EF Core it is IsUnique().HasFilter(...).
   CREATE UNIQUE INDEX UX_ScheduleRun_Active
       ON ScheduleRun(ScheduleId) WHERE TimeCompletedUtc IS NULL;
   ```
@@ -830,9 +835,9 @@ false you pay nothing and can keep all of it; to remove it entirely:
 | --- | --- |
 | Backend | delete `VueApp1.Server/Agent/`; in `Program.cs` remove `SetupAgent`, `MapAgentEndpoints`, their call sites and the `Agent:Enabled` half of the `SetupMcpTools` condition (it reverts to `Mcp:Enabled` alone); drop the `Agent*` constants in `ProblemDetailTypes.cs` |
 | Config | delete the `Agent` section from `appsettings.json` |
-| Pins | remove `Microsoft.Extensions.AI.Abstractions`, `Anthropic`, `OpenAI`, `Microsoft.Extensions.AI.OpenAI` from `Directory.Packages.props` (keep `ModelContextProtocol.*` — that is the MCP module's), then a locked-mode-refresh restore to regenerate lockfiles |
+| Pins | remove the `<PackageReference>` lines the pins anchor — `Anthropic`, `Microsoft.Extensions.AI.Abstractions`, `Microsoft.Extensions.AI.OpenAI`, `OpenAI` in `VueApp1.Server.csproj` and `Microsoft.Extensions.AI.Abstractions` in both test csproj files — then remove those four pins from `Directory.Packages.props` (keep `ModelContextProtocol.*` — that is the MCP module's; with central package management a leftover reference whose pin is gone fails restore with NU1010), then a locked-mode-refresh restore to regenerate lockfiles |
 | Tests | delete `VueApp1.Server.UnitTests/Agent/` and `VueApp1.Server.IntegrationTests/AgentEndpointTests.cs`, plus the `FakeChatClient` `<Compile Include>` link in the IntegrationTests csproj |
-| Frontend | delete `pages/AgentPage.vue` (+ spec), `components/agent/`, `composables/useAgentStream.ts` (+ spec), `services/agent.ts`, `contracts/agent.ts` (+ snapshot spec); remove the `/agent` route from `router/index.ts` and the composable's narrow direct-fetch exception from the ESLint config |
+| Frontend | delete `pages/AgentPage.vue` (+ spec), `components/agent/`, `composables/useAgentStream.ts` (+ spec), `services/agent.ts`, `contracts/agent.ts` (+ snapshot spec); remove the `/agent` route from `router/index.ts`, the Agent `<RouterLink>` from `App.vue` (a dead nav link survives `npm run check` — vue-router only warns at runtime), and the composable's narrow direct-fetch exception from the ESLint config |
 | Docs | delete this file; remove the cross-links in docs/MCP.md, docs/BACKGROUND.md, docs/REALTIME.md, docs/AI.md, README.md, AGENTS.md |
 
 Acceptance: `npm run check` green and `git diff docs/openapi/` empty — the
