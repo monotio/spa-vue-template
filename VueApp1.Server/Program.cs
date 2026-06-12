@@ -1,5 +1,6 @@
 using Scalar.AspNetCore;
 using System.Globalization;
+using System.Net.ServerSentEvents;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Mvc;
@@ -7,8 +8,10 @@ using Microsoft.Extensions.Options;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using VueApp1.Server;
+using VueApp1.Server.Agent;
 using VueApp1.Server.ExceptionHandlers;
 using VueApp1.Server.Idempotency;
 using VueApp1.Server.Mcp;
@@ -47,9 +50,25 @@ if (builder.Configuration.GetValue<bool>("OpenTelemetry:Enabled"))
 {
     SetupTelemetry(builder);
 }
-if (builder.Configuration.GetValue<bool>("Mcp:Enabled"))
+var mcpEnabled = builder.Configuration.GetValue<bool>("Mcp:Enabled");
+var agentEnabled = builder.Configuration.GetValue<bool>("Agent:Enabled");
+if (mcpEnabled || agentEnabled)
 {
-    SetupMcp(builder);
+    // ONE tool registry, two consumers: the /mcp endpoint (external MCP
+    // clients) and the in-process agent loop both consume the same
+    // McpServerTool singletons this registers. The HTTP transport is added
+    // only when /mcp is actually mapped — agent-only boots carry tool
+    // definitions but zero MCP endpoint surface.
+    var mcpBuilder = SetupMcpTools(builder);
+    if (mcpEnabled)
+    {
+        mcpBuilder.WithHttpTransport(options => options.Stateless = true);
+    }
+}
+
+if (agentEnabled)
+{
+    SetupAgent(builder);
 }
 
 var app = builder.Build();
@@ -348,14 +367,19 @@ static void SetupTelemetry(WebApplicationBuilder builder)
         });
 }
 
-static void SetupMcp(WebApplicationBuilder builder)
+static IMcpServerBuilder SetupMcpTools(WebApplicationBuilder builder)
 {
     // Opt-in MCP server hosted INSIDE this API (docs/MCP.md). Stateless
     // Streamable HTTP: every POST is self-contained — no session affinity,
     // so it scales horizontally and matches where the MCP spec is heading.
     // Tools live in Mcp/Tools and delegate to the SAME services the
     // controllers use; add new tool classes with another WithTools<T>() call.
-    builder.Services.AddMcpServer(options =>
+    // This method registers serverInfo/instructions/tools ONLY — no
+    // endpoints, no hosted service, no transport. It runs for
+    // Mcp:Enabled OR Agent:Enabled (the agent loop dispatches in-process to
+    // these same tool singletons via McpToolAdapter); the /mcp surface
+    // itself stays gated on Mcp:Enabled alone.
+    return builder.Services.AddMcpServer(options =>
         {
             options.ServerInfo = new()
             {
@@ -374,8 +398,30 @@ static void SetupMcp(WebApplicationBuilder builder)
                 + "branch on the stable `code` (e.g. not_found, invalid_parameter, conflict, rate_limited) "
                 + "instead of parsing messages, and back off before retrying rate_limited.";
         })
-        .WithHttpTransport(options => options.Stateless = true)
         .WithTools<WeatherTools>();
+}
+
+static void SetupAgent(WebApplicationBuilder builder)
+{
+    // Opt-in agent loop (docs/AGENT.md): SSE turns over the in-process MCP
+    // tool registry, approval gate, finally-accounted usage ledger. Same
+    // honest banner as Idempotency/BackgroundWork: the conversation store,
+    // pending approvals, turn lock and ledger are IN-MEMORY — process-local,
+    // single-node, lost on restart. Durable seams: docs/AGENT.md.
+    builder.Services.AddSingleton<IValidateOptions<AgentOptions>>(
+        provider => new AgentOptionsValidator(provider));
+    builder.Services.AddOptions<AgentOptions>()
+        .Bind(
+            builder.Configuration.GetSection(AgentOptions.SectionName),
+            binder => binder.ErrorOnUnknownConfiguration = true)
+        .ValidateOnStart();
+    builder.Services.AddSingleton<McpToolAdapter>();
+    builder.Services.AddSingleton<AgentToolPolicy>();
+    builder.Services.AddSingleton<IAgentConversationStore, InMemoryAgentConversationStore>();
+    builder.Services.AddSingleton<AgentUsageLedger>();
+    // Scoped: the loop's DI scope IS the turn scope — bridged tool calls
+    // resolve their constructor dependencies from it.
+    builder.Services.AddScoped<AgentLoopService>();
 }
 
 static void ConfigureSecurityHeaders(WebApplication app)
@@ -555,6 +601,17 @@ static void ConfigurePipeline(WebApplication app, PerformanceTuningOptions perfo
         }).ExcludeFromDescription();
     }
 
+    // Opt-in agent surface (SetupAgent). Same hardening posture as /mcp:
+    // the global IP rate limiter already covers /api/agent, the endpoints
+    // are ExcludeFromDescription (a flag-gated surface must never drift the
+    // committed OpenAPI contract), and there is NO auth by default — do not
+    // expose beyond trusted networks without adding authentication
+    // (docs/AGENT.md, docs/AUTH.md).
+    if (app.Configuration.GetValue<bool>("Agent:Enabled"))
+    {
+        MapAgentEndpoints(app);
+    }
+
     app.MapStaticAssets();
     // Safety net for wwwroot content added AFTER publish (e.g. the Docker image
     // copies the SPA dist in at image-assembly time): MapStaticAssets only
@@ -613,3 +670,140 @@ static void ConfigurePipeline(WebApplication app, PerformanceTuningOptions perfo
         OnPrepareResponse = ctx => ctx.Context.Response.Headers.CacheControl = "no-cache",
     });
 }
+
+static void MapAgentEndpoints(WebApplication app)
+{
+    var agent = app.MapGroup("/api/agent").ExcludeFromDescription();
+
+    // One POST = one agent request (up to Agent:MaxTurnsPerRequest provider
+    // calls), streamed as SSE per docs/REALTIME.md invariants: under /api
+    // (SW-denylisted, dev-proxied), text/event-stream never compressed.
+    // Guards that must be HTTP statuses (409 turn-in-progress, 429 budget)
+    // are decided before the first SSE byte. Idempotency-Key gives stream
+    // POSTs in-flight duplicate suppression (see IdempotencyEndpointFilter).
+    agent.MapPost(
+            "/conversations/{conversationId}/turns",
+            (string conversationId, AgentTurnRequest request, HttpContext httpContext, AgentLoopService loop) =>
+            {
+                if (!IsValidAgentConversationId(conversationId))
+                {
+                    return InvalidConversationIdProblem();
+                }
+
+                if (!AgentLoopService.IsValidUserMessage(request.Message))
+                {
+                    return Results.Problem(
+                        statusCode: StatusCodes.Status400BadRequest,
+                        title: "Validation failed",
+                        type: ProblemDetailTypes.ValidationFailed,
+                        detail: "message must be non-empty and at most 32000 characters.");
+                }
+
+                return MapAgentTurnStart(
+                    loop.TryStartTurn(conversationId, request, httpContext.User, httpContext.RequestAborted));
+            })
+        .AddEndpointFilter<IdempotencyEndpointFilter<AgentTurnRequest>>()
+        .WithRequestTimeout("long-running");
+
+    // Resumes the loop frozen at the approval gate; the continuation streams
+    // on THIS response. Body mirrors MEAI's ToolApprovalResponseContent
+    // shape {approved, reason}.
+    agent.MapPost(
+            "/conversations/{conversationId}/approvals/{toolCallId}",
+            (string conversationId, string toolCallId, AgentApprovalRequest request, HttpContext httpContext,
+                AgentLoopService loop) =>
+            {
+                if (!IsValidAgentConversationId(conversationId))
+                {
+                    return InvalidConversationIdProblem();
+                }
+
+                return MapAgentTurnStart(
+                    loop.TryStartApprovalTurn(
+                        conversationId, toolCallId, request, httpContext.User, httpContext.RequestAborted));
+            })
+        .WithRequestTimeout("long-running");
+
+    // Canonical replay: completed UI parts derived from the transcript via
+    // the same AgentUiParts mapper the live stream uses — one renderer for
+    // live and replayed conversations.
+    agent.MapGet(
+        "/conversations/{conversationId}",
+        (string conversationId, IAgentConversationStore store) =>
+        {
+            if (!IsValidAgentConversationId(conversationId))
+            {
+                return InvalidConversationIdProblem();
+            }
+
+            if (!store.Exists(conversationId))
+            {
+                return Results.Problem(
+                    statusCode: StatusCodes.Status404NotFound,
+                    title: "Not Found",
+                    type: ProblemDetailTypes.AgentConversationNotFound,
+                    detail: $"No agent conversation '{conversationId}' exists.");
+            }
+
+            var snapshot = new AgentConversationSnapshot(
+                conversationId,
+                [.. store.GetMessages(conversationId).Select(message => AgentUiParts.ToSnapshot(message, conversationId))],
+                [.. store.GetPendingApprovals(conversationId).Select(pending => AgentUiParts.ApprovalRequired(pending, conversationId))]);
+            return Results.Json(snapshot, AgentJsonContext.Default.AgentConversationSnapshot);
+        });
+
+    // The visible-spend endpoint: a first-time cloner sees what the agent
+    // costs within minutes, not on next month's vendor bill.
+    agent.MapGet(
+        "/usage",
+        (AgentUsageLedger ledger) => Results.Json(ledger.GetSummary(), AgentJsonContext.Default.AgentUsageSummary));
+}
+
+static IResult MapAgentTurnStart(AgentTurnStart start) => start.Status switch
+{
+    AgentTurnStartStatus.Started => TypedResults.ServerSentEvents(ToSseItems(start.Stream!)),
+    AgentTurnStartStatus.TurnInProgress => Results.Problem(
+        statusCode: StatusCodes.Status409Conflict,
+        title: "Agent turn already in progress",
+        type: ProblemDetailTypes.AgentTurnInProgress,
+        detail: "Another turn is streaming for this conversation. Wait for it to finish (or abort it) and retry."),
+    AgentTurnStartStatus.BudgetExceeded => Results.Problem(
+        statusCode: StatusCodes.Status429TooManyRequests,
+        title: "Daily agent budget exhausted",
+        type: ProblemDetailTypes.AgentBudgetExceeded,
+        detail: "Today's Agent:DailyUsdBudget is spent. The budget resets at resetAtUtc (UTC midnight).",
+        extensions: new Dictionary<string, object?> { ["resetAtUtc"] = start.ResetAtUtc }),
+    AgentTurnStartStatus.ApprovalNotFound => Results.Problem(
+        statusCode: StatusCodes.Status404NotFound,
+        title: "Approval not found",
+        type: ProblemDetailTypes.AgentApprovalNotFound,
+        detail: "No pending approval matches this tool call id."),
+    AgentTurnStartStatus.ApprovalConflict => Results.Problem(
+        statusCode: StatusCodes.Status409Conflict,
+        title: "Tool policy changed since approval was requested",
+        type: ProblemDetailTypes.AgentApprovalConflict,
+        detail: "The tool-policy surface diverged between freeze and execution; the frozen call was not run. "
+            + "Reload the conversation and request the action again."),
+    _ => throw new InvalidOperationException($"Unhandled agent turn start status: {start.Status}"),
+};
+
+static async IAsyncEnumerable<SseItem<string>> ToSseItems(IAsyncEnumerable<AgentStreamPart> parts)
+{
+    // Each part is serialized through the agent module's source-generated
+    // context: deterministic camelCase bytes, locked by wire-shape snapshot
+    // tests — the composable on the other end parses exactly this.
+    await foreach (var part in parts)
+    {
+        yield return new SseItem<string>(JsonSerializer.Serialize(part, AgentJsonContext.Default.AgentStreamPart));
+    }
+}
+
+static bool IsValidAgentConversationId(string conversationId) =>
+    conversationId.Length is >= 1 and <= 64
+    && conversationId.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_');
+
+static IResult InvalidConversationIdProblem() => Results.Problem(
+    statusCode: StatusCodes.Status400BadRequest,
+    title: "Validation failed",
+    type: ProblemDetailTypes.ValidationFailed,
+    detail: "conversationId must be 1-64 characters of [A-Za-z0-9_-].");

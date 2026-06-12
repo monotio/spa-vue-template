@@ -1,10 +1,12 @@
 # LLM features — day-one discipline
 
-The template ships **zero AI code** — the provider and SDK choice is yours.
-What this page gives you is the discipline that must exist *before* the
-first LLM feature merges: these habits are cheap on day one and expensive to
-retrofit. (The other direction — serving tools TO agents — is
-[docs/MCP.md](MCP.md).)
+The template ships **zero provider code by default** — and one opt-in
+exception: the Agent module ([docs/AGENT.md](AGENT.md), `Agent:Enabled=false`)
+is the applied version of every rule below, kept behind a flag so the
+zero-secrets boot stays true. What this page gives you is the discipline that
+must exist *before* the first LLM feature merges: these habits are cheap on
+day one and expensive to retrofit. (The other direction — serving tools TO
+agents — is [docs/MCP.md](MCP.md).)
 
 ## Where the call lives
 

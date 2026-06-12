@@ -20,4 +20,32 @@ public static class ProblemDetailTypes
 
     /// <summary>The original request carrying this Idempotency-Key is still in flight (409).</summary>
     public const string IdempotencyInProgress = "/problems/idempotency-in-progress";
+
+    /// <summary>Another agent turn is already streaming for this conversation (409).</summary>
+    public const string AgentTurnInProgress = "/problems/agent-turn-in-progress";
+
+    /// <summary>
+    /// The soft daily agent budget is exhausted (429). Carries a
+    /// <c>resetAtUtc</c> extension (next UTC midnight) instead of
+    /// <c>Retry-After</c>: budget exhaustion is a quota, not a rate limit —
+    /// retrying sooner can never succeed.
+    /// </summary>
+    public const string AgentBudgetExceeded = "/problems/agent-budget-exceeded";
+
+    /// <summary>
+    /// The tool-policy surface changed between approval freeze and execution;
+    /// the frozen call must never run under a surface the user did not see (409).
+    /// </summary>
+    public const string AgentApprovalConflict = "/problems/agent-approval-conflict";
+
+    /// <summary>No pending approval matches this tool call id (404).</summary>
+    public const string AgentApprovalNotFound = "/problems/agent-approval-not-found";
+
+    /// <summary>
+    /// No agent conversation with this id exists (404). Typed so clients can
+    /// distinguish it from the TYPELESS 404 the same URL answers with when
+    /// the agent module is disabled (the /api fallback) — the frontend's
+    /// disabled-state callout branches on exactly that difference.
+    /// </summary>
+    public const string AgentConversationNotFound = "/problems/agent-conversation-not-found";
 }
