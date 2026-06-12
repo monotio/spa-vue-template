@@ -14,6 +14,14 @@ wrong one. What it does ship is the seam every option plugs into:
 | Recurring/cron schedules, still no persistence | A periodic-`Timer` `BackgroundService`, or a lightweight scheduler lib (Coravel, NCronJob, TickerQ) — same loss-on-restart caveat unless the lib persists. |
 | Work that must survive restarts, retries with backoff, a dashboard | Hangfire or Quartz.NET + a database ([docs/DATA.md](DATA.md)). Only the enqueue sites change shape — the envelope rules below carry over. |
 
+A consumer already waiting for this seam: **detached agent turns**. The
+opt-in Agent module exposes an HttpContext-free, integration-tested entry
+point (`AgentLoopService.RunDetachedTurnAsync`, unattended tool posture)
+designed to be called from a queue worker or a future DB-sweep scheduler —
+the recipe, including the schedule schema and overlap protection, is in
+[docs/AGENT.md](AGENT.md) "Scheduling". Resolve the loop from the item's
+fresh DI scope, exactly like any other enqueued work.
+
 The shipped queue's hard-won part is not the channel; it is the **envelope**:
 ambient context (current `Activity`, culture, the request's DI scope) does
 NOT flow across an enqueue boundary. The queue captures trace context +

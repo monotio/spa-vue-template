@@ -13,6 +13,17 @@ pays zero cost until you flip the flag. (This page is about serving tools
 *to* agents; the reverse direction — your app calling models — has its own
 discipline guide: [docs/AI.md](AI.md).)
 
+**One tool definition, two consumers.** The opt-in Agent module
+([docs/AGENT.md](AGENT.md)) dispatches the SAME `McpServerTool` registry
+**in-process** — no loopback HTTP, no second tool list. Tool registration
+(`SetupMcpTools` in Program.cs) runs when `Mcp:Enabled || Agent:Enabled`;
+the `/mcp` endpoint mapping stays gated on `Mcp:Enabled` alone (pinned by
+the flag-matrix integration test). Practical consequences for tool authors:
+your annotations now drive an execution policy, not just trust UI (below),
+and a handful of names are loop-reserved — registering an `McpServerTool`
+named `load_skill` fails boot when the agent module is enabled, because the
+loop dispatches that name itself and would silently shadow yours.
+
 ## Enabling
 
 ```jsonc
@@ -119,6 +130,14 @@ unpredictable* — some will demand human confirmation for every call. Every
 tool sets `Title`, `ReadOnly`, `Destructive`, `Idempotent`, `OpenWorld`
 (see `WeatherTools` for the shape).
 
+With the Agent module enabled, the annotations are **load-bearing, not
+cosmetic**: `AgentToolPolicy` derives execution tiers from them —
+`ReadOnly=true` auto-executes, an annotated non-destructive write needs
+human approval by default, and a destructive or UNANNOTATED tool always
+parks at the approval gate, fail-closed. Forgetting the annotations no
+longer just makes a tool look scary in external clients; it makes every
+in-app agent call to it wait for a human.
+
 ### Descriptions: four parts
 
 Tool-description quality measurably drives agent tool-selection accuracy.
@@ -194,3 +213,11 @@ arrive through this package. Treat its version bumps as protocol upgrades —
 run `McpEndpointTests` (which exercise the endpoint through the official SDK
 client precisely so wire-format changes ride on the bump) and re-skim this
 doc's SDK-version-tagged claims.
+
+The same doctrine covers the **in-process bridge**: the Agent module
+dispatches registry tools through public `ModelContextProtocol.Core`
+surface (`McpServerTool.InvokeAsync` + a synthetic `RequestContext` —
+[docs/AGENT.md](AGENT.md) "The in-process MCP bridge"), so on any
+`ModelContextProtocol.*` bump also run the Agent suites:
+`npm run test:backend -- --filter "FullyQualifiedName~Agent"`. A breaking
+SDK change fails those tests loudly in CI — never silently in a loop.

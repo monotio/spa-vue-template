@@ -42,7 +42,7 @@ instead of deleting `obj`/`bin`: `npm run build-server-shutdown`, then rebuild.
 Deep dives: [Testing](docs/TESTING.md), [Frontend](docs/FRONTEND.md),
 [API](docs/API.md), [Configuration](docs/CONFIG.md),
 [Patterns](docs/PATTERNS.md), [MCP server](docs/MCP.md),
-[GitHub workflow](docs/GITHUB.md),
+[Agent module](docs/AGENT.md), [GitHub workflow](docs/GITHUB.md),
 [ast-grep guardrails](docs/AST_GREP_GUIDE.md).
 
 Guides to deliberately-omitted capabilities (read before adding one):
@@ -68,6 +68,10 @@ Production-grade SPA template:
 - **npm workspaces**: `vueapp1.client` is a workspace of the root manifest —
   ONE root `package-lock.json`, one `npm ci` at the root, dependencies
   hoisted to the root `node_modules`. The `npm --prefix` wrappers still work.
+- **Agent module** (`VueApp1.Server/Agent/`, opt-in `Agent:Enabled=false`):
+  hand-rolled `IChatClient` tool-calling loop — SSE turns, in-process MCP
+  dispatch, approvals, skills, attachments, usage ledger — tested with zero
+  secrets via `FakeChatClient`. Contract: [docs/AGENT.md](docs/AGENT.md).
 - Dev: backend hosts and proxies to Vite; HTTPS via auto-generated dev certs.
   Prod: backend serves the built SPA with an `index.html` fallback (PWA-aware,
   no-cache) and ProblemDetails 404s for unmatched `/api` routes.

@@ -302,7 +302,13 @@ Activation is **model-initiated**: `load_skill` is a built-in, read-tier,
 **loop-only** `AIFunction` — it is not an `McpServerTool`, so external MCP
 clients never see it; the unattended posture strips it (no skills without a
 human in the loop), and a hallucinated unattended call gets the
-`not_authorized` envelope. Guard rails, all dispatched in
+`not_authorized` envelope. The name is **reserved at boot**: the loop
+dispatches `load_skill` before consulting `AgentToolPolicy`, so an
+`McpServerTool` registered under a loop-reserved name
+(`AgentLoopService.LoopReservedToolNames`) would be silently shadowed for
+the agent while external `/mcp` clients still saw it — the options
+validator fails startup on the collision instead (flag-off deployments may
+name external-only tools freely). Guard rails, all dispatched in
 `AgentLoopService.ResolveLoadSkill`:
 
 - **Active-skill cap** (3 per conversation, derived from skill-stamped
@@ -402,8 +408,13 @@ Caps live in `Agent:Attachments` (`MaxBytes` 5 MiB, `MaxPerMessage` 4,
 `AllowedContentTypes` allowlist) and are enforced twice: at the upload
 endpoint as typed ProblemDetails (the composer mirrors the defaults
 client-side in `contracts/agent.ts` for instant feedback), and again inside
-`InMemoryAttachmentStore` as defense in depth. Two cap subtleties are
-load-bearing:
+`InMemoryAttachmentStore` as defense in depth. The composer also covers a
+browser gap: `File.type` is EMPTY for extensions outside the browser's MIME
+registry (`.md` is the common casualty), which would otherwise reject an
+allowlisted file locally — or upload it as `application/octet-stream` into
+the server's 415. `AgentPage` maps known extensions onto the same mirrored
+allowlist (never beyond it) and re-wraps the file with the inferred type.
+Two cap subtleties are load-bearing:
 
 - **The allowlist narrows via `appsettings.json` only.** Its code default is
   deliberately empty because the configuration binder merges into non-empty
@@ -504,6 +515,161 @@ checklist:
   (Anthropic `cache_control` breakpoints) are covered in the Providers
   section above.
 
+## Scheduling — the seam is tested code, the sweeper is a recipe
+
+The module ships **no scheduler, on purpose**. An in-memory sweeper would
+silently lose every schedule on restart — and unlike the best-effort
+`BackgroundWork/` queue (where loss-on-restart is a documented, acceptable
+posture), a schedule is something a human RELIES on firing. A scheduler that
+forgets is worse than no scheduler: absent capability fails loudly at design
+time; a forgotten schedule fails silently in production weeks later. So the
+scheduler waits for the database ([docs/DATA.md](DATA.md)) — but the seam it
+plugs into is shipped and integration-tested today:
+
+```csharp
+// HttpContext-free, no SSE writer, unattended tool posture,
+// result persisted to the conversation store:
+var result = await loop.RunDetachedTurnAsync(
+    conversationId, prompt, AgentToolPosture.Unattended, ct);
+// result.FinishReason: stop | max-turns | budget-exceeded | turn-in-progress | …
+```
+
+Every loop guarantee holds unattended: budgets gate, the ledger accounts in
+`finally`, approval-tier tools are not advertised and a hallucinated call
+gets the `not_authorized` envelope, `load_skill` is stripped. Resolve
+`AgentLoopService` from a **fresh DI scope per run** — exactly what a
+`BackgroundWorkQueue` consumer or a hosted sweeper does naturally.
+
+### The DB-sweep design (the durable upgrade, written down)
+
+When you add persistence, do not create one recurring scheduler job per
+schedule — registrations drift from rows on every edit/delete/restore. Run
+**one sweep** and make the database the single source of truth:
+
+- **Schema sketch** (generic; adapt names):
+
+  ```sql
+  CREATE TABLE Schedule (
+      Id            INT PRIMARY KEY,
+      Prompt        NVARCHAR(MAX) NOT NULL,  -- plain markdown, NO user templating
+      CronExpression NVARCHAR(64) NULL,
+      NextFireUtc   DATETIME2 NULL,          -- THE source of truth for "due"
+      Paused        BIT NOT NULL DEFAULT 0,
+      FailureStreak INT NOT NULL DEFAULT 0
+  );
+  CREATE TABLE ScheduleRun (
+      Id              INT PRIMARY KEY,
+      ScheduleId      INT NOT NULL REFERENCES Schedule(Id),
+      ConversationId  NVARCHAR(64) NOT NULL, -- FRESH conversation per run
+      TimeStartedUtc  DATETIME2 NOT NULL,
+      TimeCompletedUtc DATETIME2 NULL,
+      Outcome         NVARCHAR(32) NULL
+  );
+  -- Overlap protection lives in the CONSTRAINT, not in status-enum timing:
+  CREATE UNIQUE INDEX UX_ScheduleRun_Active
+      ON ScheduleRun(ScheduleId) WHERE TimeCompletedUtc IS NULL;
+  ```
+
+- **The sweeper** is a hosted `BackgroundService` ticking on an injected
+  `TimeProvider` (`PeriodicTimer` over `TimeProvider` — tests drive it with
+  a fake clock, the BannedSymbols wall-clock rule stays intact). Each tick:
+  select `NextFireUtc <= now AND NOT Paused`, insert the run row (the
+  filtered unique index rejects an overlapping second run — if the previous
+  run is still open, this tick simply skips), advance `NextFireUtc` from the
+  cron expression (Cronos is the natural parser; deliberately not a shipped
+  pin), then hand the run to a worker — the dormant `BackgroundWork/` queue
+  is the in-process consumer shape, a durable scheduler from
+  [docs/BACKGROUND.md](BACKGROUND.md) the restart-safe one. The worker
+  creates a fresh conversation and calls `RunDetachedTurnAsync`.
+- **Missed ticks are skipped, never caught up**: after downtime, advance
+  `NextFireUtc` from *now* — firing six stale "daily summary" runs at boot
+  is a bug report, not recovery. Corollaries: the minimum cron interval is
+  the sweep granularity, and a cron tighter than the sweep is rejected at
+  validation time, not silently underserved.
+- **Fresh conversation per run.** Reusing one thread breaks the turn-budget
+  and lock invariants and grows an unbounded transcript; a run's report
+  links to its run row via the conversation id.
+- **Auto-pause classifier**: pause a schedule after N consecutive
+  *user-actionable* failures (a broken prompt, a deleted target) — but
+  classify before counting: **operator-blocked** outcomes (daily budget
+  exhausted, missing API key) must NOT count toward auto-pause (pausing a
+  schedule because the operator's budget knob gated it punishes the wrong
+  party — defer to the next tick instead), and **infra-transient** failures
+  retry on the next tick for free. Put an enum-coverage test on the
+  classifier so a newly added outcome cannot fall through to the wrong
+  bucket silently.
+- **Edits touch rows, never a scheduler registration** — pause is a flag,
+  delete is soft, there is no second system to drift against. A manual "run
+  now" inserts a run row directly (and 409s on the unique index if a run is
+  in flight) without touching `NextFireUtc`.
+- The sweep inherits every recurring-job rule in
+  [docs/BACKGROUND.md](BACKGROUND.md): the sweep is its own retry, no-op
+  ticks log at Trace, kill switches exist before you need them.
+
+## Workflows — sequencing is code you own, not an engine
+
+For a starter, a "workflow" is a **seeded conversation**: a named
+`{startPrompt, skills[]}` resolved at conversation creation. The UI speaks
+workflow names; skill names stay an implementation detail:
+
+```csharp
+public sealed record AgentWorkflow(string Name, string StartPrompt, string[] Skills);
+
+// All-or-nothing at creation: a missing skill is a 400 HERE, never a
+// mid-run surprise three turns in.
+foreach (var name in workflow.Skills)
+{
+    if (!skillCatalog.TryGet(name, out var skill))
+    {
+        return ServiceResponse<string>.BadRequest($"Unknown skill '{name}'.");
+    }
+    // Append the body exactly the way load_skill would: a skill-stamped
+    // tool-result message — content below the cached prefix, never
+    // system-authority, counted against the same active-skill cap.
+}
+// Then run the start prompt as turn 1 (streamed, or detached for
+// fire-and-forget) — the model wakes up mid-task with its instructions
+// already loaded.
+```
+
+Multi-STEP orchestration is the same idea one level up: **code-owned
+sequencing of turns and outcomes**. `RunDetachedTurnAsync` returns a finish
+reason and the final text; a plain C# method that calls it N times —
+branching on outcomes, feeding step N's result into step N+1's prompt,
+bailing on `budget-exceeded` — is a workflow engine with zero dependencies,
+full debuggability, and the same ledger/policy guarantees as every other
+turn. Start there.
+
+Reach for **Microsoft.Agents.AI** (Agent Framework) instead when the
+sequencing itself becomes the product: multi-agent handoffs, fan-out/fan-in
+graphs, human-in-the-loop checkpoints persisted across processes,
+long-running state machines. It builds on the same MEAI abstractions, so the
+tools, transcript model and policy investments transfer. What you should not
+do is adopt an orchestration engine to run ONE loop — visual agent-builder
+products from major vendors have already been launched and sunset inside a
+year; a dependency graveyard is a real cost axis in this space, and code you
+own cannot be discontinued.
+
+## Durable upgrades — every in-memory seam in one table
+
+Everything below ships in-memory with the same honest banner as
+Idempotency/BackgroundWork: process-local, lost on restart, single-node.
+The interfaces are shaped so each swap changes a registration, not call
+sites. What the table adds are the **fidelity notes** — the places where a
+naive durable swap is silently lossy:
+
+| In-memory default | Durable upgrade | The note that matters |
+| --- | --- | --- |
+| `InMemoryAgentConversationStore` | EF: one row per message, parts serialized with `AIJsonUtilities` | Two fidelity boundaries. (1) `TextReasoningContent.ProtectedData` **serializes and round-trips** — durable stores keep reasoning replay intact; what does NOT serialize is `RawRepresentation` (adapter-internal extras — acceptably lossy). (2) **`AdditionalProperties` stamps lose their CLR types on a JSON round-trip**: the live store holds a `Guid` under `agent.turnId` and an `IReadOnlyList<AgentAttachmentRef>` under `agent.attachments`; deserialized, both come back as `JsonElement`, so pattern matches like `stamped is IReadOnlyList<AgentAttachmentRef>` (the hydration gate in `AgentMessageBuilder.HydrateAsync` and the chip derivation in `AgentUiParts.FromMessage`) stop matching — attachments silently stop hydrating and chips vanish, with no error anywhere. A durable store must re-materialize stamps to their typed shapes on read, and a porting test must pin it. |
+| one-active-turn `bool` lock (in the store) | TTL lease + per-turn renewal; abort on lease-id mismatch | Part of the store swap. The in-memory lock is single-node; two replicas without a lease will interleave turns and corrupt transcripts politely. |
+| `AgentUsageLedger` | one DB row per `AgentUsageEntry` | Keep the `finally` write and use a fresh scope + non-cancelled token for it — a client abort already consumed tokens. Reconcile recorded spend against the **vendor bill** after deploy (within ~10% is healthy); the estimate column is for dashboards, the bill is the truth. |
+| `InMemoryAttachmentStore` | blob storage (Azure Blob / S3): `SaveAsync` = put, `GetAsync` = stream, `Exists` = HEAD | The `[Attachment unavailable]` placeholder degradation means the swap touches no call sites. Keep the size/type caps enforced server-side — the blob store must not become a way around the upload endpoint's checks. |
+| `FileSystemSkillCatalog` | DB-backed catalog (temporally versioned bodies buy audit/rollback for free on databases that support it) | Keep the L0 catalog stable per deploy — or accept that every catalog edit busts the cache prefix for all conversations, knowingly. Tenant/user-authored skills additionally need trust tiers; the content-only rule (no grant surface) must survive the storage change. |
+| P5-lite (strip foreign-provider reasoning on switch) | contiguous-tail replay window + sticky suppression | Replay reasoning only for the unbroken tail of assistant turns since the last user message (window closers: user turn, zero-reasoning assistant turn, thread start, provider switch). A reasoning blob that fails to parse suppresses the WHOLE window until the next user boundary — never partial replay, never forward-healing: handing a model a reasoning history it never produced is the failure mode, reasoning-lossy is the accepted degradation. |
+| no stream resume (disconnect cancels) | Redis tee: generation continues server-side, parts tee'd under a stream id; the client replays + tails on reconnect | This flips the billing posture — disconnect no longer stops spend — so it belongs behind the same deliberate decision as the budget knobs, not a default. |
+| no scheduler | the DB-sweep sweeper above, over `RunDetachedTurnAsync` | — |
+| no auth on `/api/agent/*` | [docs/AUTH.md](AUTH.md) when adopted | The approval endpoint and the usage ledger become per-user surfaces the day auth lands; the policy-surface hash already anticipates per-principal divergence. |
+
 ## The 20-line alternative (and when to take it)
 
 If you do not need per-event SSE visibility at dispatch time, cross-request
@@ -552,15 +718,75 @@ Outgrowing both? **Microsoft.Agents.AI** (Agent Framework, GA) is the
 graduation path — built on the same MEAI abstractions, so the tools,
 transcript and policy investments transfer.
 
+## Decision guide — who owns your loop?
+
+Same format as [docs/AUTH.md](AUTH.md)/[docs/DATA.md](DATA.md): pick the
+lane that matches what you actually need, and know what each lane costs.
+
+### You need to OWN the dispatch point → this module's hand-rolled loop
+
+Per-tool-call SSE events, the cross-request approval freeze (frozen args +
+policy-surface hash), between-turn budget exits, the abort-proof `finally`
+ledger write — every one of these requires owning the moment a tool call is
+dispatched. Middleware hides exactly that moment. This is also the teaching
+lane: ~150 readable lines instead of trust.
+
+### One request, tools in, answer out, no human gate → `UseFunctionInvocation`
+
+The 20-line alternative above. You observe dispatch, you do not own it —
+fine when nothing needs to happen AT dispatch time. Keep
+`AllowMultipleToolCalls = false` if you later add middleware approvals (the
+all-or-nothing-per-response caveat), and keep the guard knobs explicit.
+
+### The orchestration IS the product → Microsoft.Agents.AI
+
+Multi-agent handoffs, workflow graphs, checkpoints that survive processes.
+Same MEAI abstractions underneath, so the investment here transfers. Do not
+take this lane for one loop's worth of behavior — see the Workflows section
+for how far code-owned sequencing carries.
+
+### You want the provider to run the agent → hosted managed-agent offerings
+
+Provider-side agent runtimes (assistant/agent APIs with provider-held
+threads, built-in tools like web search and code execution, per-vendor
+flavors from every major lab and cloud) are the fastest path to a demo and
+the most expensive path out. Know what you trade away, in this module's
+vocabulary: **P2 dies** (the conversation lives with the vendor —
+`previous_response_id`-style server state is the mechanism this module
+structurally bans), the **ledger becomes their dashboard** (you reconcile
+spend on their terms), **tool policy becomes their approval UX** (your
+fail-closed tiers may not map), and migration out means re-importing
+transcripts you never held. Legitimate when: prototyping, a hard
+single-vendor commitment, or when their built-in tools (hosted browsing,
+code sandboxes) are the actual feature. If you take this lane, keep YOUR
+usage row per call anyway — the invisible-spend lesson does not care where
+the loop runs.
+
+### What this module deliberately does NOT do (so the lanes stay honest)
+
+No durable stores (every seam in the table above is in-memory), no stream
+resume, no scheduler (seam + recipe only), no multi-agent orchestration, no
+conversation-list UI, no auth, one provider per process, no provider
+built-in tools (web search, code execution — the tool surface is YOUR MCP
+registry). Each absence is either a documented seam with a named upgrade or
+a documented graduation path — if one of them is your day-one requirement,
+start in the lane that ships it.
+
 ## Injection defence (loop-specific addendum to docs/AI.md)
 
 Tool results, skill bodies and attachment text are untrusted model input;
-detection is broken, so containment is structural: shipped tools are
-read-only with no egress; destructive/unannotated tools require human
-approval; unattended runs cannot reach approval-tier tools at all; untrusted
-content never enters the cached prefix or any system-authority position;
-inlined attachment text is confined to the boundary-nonce frame (see
-Attachments); raw exception text never reaches the model.
+detection is broken, so containment is structural. The frame to reason
+with is the **lethal trifecta**: an agent that combines (1) access to
+private data, (2) exposure to untrusted content, and (3) an egress channel
+can be made to exfiltrate — no single prompt fixes that, only removing a
+leg does. The shipped defaults break the egress leg (tools are read-only
+with no egress) and fence the others: destructive/unannotated tools require
+human approval; unattended runs cannot reach approval-tier tools at all;
+untrusted content never enters the cached prefix or any system-authority
+position; inlined attachment text is confined to the boundary-nonce frame
+(see Attachments); raw exception text never reaches the model. **Re-run the
+trifecta check every time you add a tool** — the first tool that can POST
+to the internet (or send an email) reassembles all three legs at once.
 
 ## Test strategy (zero secrets, forever)
 
@@ -594,3 +820,21 @@ construct the real adapters with fake keys and inspect `ChatClientMetadata`
   prefix for BOTH postures; in unattended runs the tool itself is stripped, so
   a model attempting `load_skill` there receives `not_authorized` rather than a
   silent no-op.
+
+## Deleting the module
+
+Built to leave: one folder per side plus stitches. With `Agent:Enabled`
+false you pay nothing and can keep all of it; to remove it entirely:
+
+| Where | What |
+| --- | --- |
+| Backend | delete `VueApp1.Server/Agent/`; in `Program.cs` remove `SetupAgent`, `MapAgentEndpoints`, their call sites and the `Agent:Enabled` half of the `SetupMcpTools` condition (it reverts to `Mcp:Enabled` alone); drop the `Agent*` constants in `ProblemDetailTypes.cs` |
+| Config | delete the `Agent` section from `appsettings.json` |
+| Pins | remove `Microsoft.Extensions.AI.Abstractions`, `Anthropic`, `OpenAI`, `Microsoft.Extensions.AI.OpenAI` from `Directory.Packages.props` (keep `ModelContextProtocol.*` — that is the MCP module's), then a locked-mode-refresh restore to regenerate lockfiles |
+| Tests | delete `VueApp1.Server.UnitTests/Agent/` and `VueApp1.Server.IntegrationTests/AgentEndpointTests.cs`, plus the `FakeChatClient` `<Compile Include>` link in the IntegrationTests csproj |
+| Frontend | delete `pages/AgentPage.vue` (+ spec), `components/agent/`, `composables/useAgentStream.ts` (+ spec), `services/agent.ts`, `contracts/agent.ts` (+ snapshot spec); remove the `/agent` route from `router/index.ts` and the composable's narrow direct-fetch exception from the ESLint config |
+| Docs | delete this file; remove the cross-links in docs/MCP.md, docs/BACKGROUND.md, docs/REALTIME.md, docs/AI.md, README.md, AGENTS.md |
+
+Acceptance: `npm run check` green and `git diff docs/openapi/` empty — the
+agent surface was never in the committed OpenAPI contract, so deleting it
+must not move the contract by a byte.

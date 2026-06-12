@@ -52,11 +52,20 @@ GenAI LLM01 remains the top risk). The mitigations are structural:
   [docs/MCP.md](MCP.md) "Tool-design doctrine", applied from the other side
   of the boundary.
 
+Every rule above runs as code in the Agent module: nonce-framed attachment
+text, annotation-derived tool tiers with fail-closed approvals, untrusted
+content never in system-authority positions — the loop-specific addendum
+(including the lethal-trifecta check to re-run on every new tool) is in
+[docs/AGENT.md](AGENT.md) "Injection defence".
+
 ## Prompts are code
 
 - **Centralize prompts in one greppable module** (a constants class on the
   backend) — never inline in services. Inline prompts dodge review, dodge
-  diffs, and multiply when copy-pasted.
+  diffs, and multiply when copy-pasted. The in-repo example is
+  `Agent/AgentPrompts.cs`: one compiled, byte-stable constant whose
+  stability is load-bearing for provider prompt caching (and pinned by a
+  test) — see [docs/AGENT.md](AGENT.md) "Prompt-cache discipline".
 - **Version them**: stamp a version identifier alongside meaningful prompt
   changes so logs, traces, and evals can attribute behavior shifts to the
   prompt revision that caused them.
