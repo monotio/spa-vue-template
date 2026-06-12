@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
@@ -39,6 +40,20 @@ public sealed partial class AgentLoopService(
     ILogger<AgentLoopService> logger)
 {
     private const int MaxUserMessageLength = 32_000;
+
+    /// <summary>
+    /// Tool names the loop dispatches ITSELF, before consulting
+    /// <see cref="AgentToolPolicy"/>. An <c>McpServerTool</c> registered
+    /// under one of these names would be silently shadowed for the agent
+    /// (its annotations ignored, its handler never invoked) while still
+    /// being served verbatim to external <c>/mcp</c> clients — a split-brain
+    /// tool nobody notices until behavior diverges. The options validator
+    /// rejects the collision at boot, unconditionally: the shadowing only
+    /// bites while a skill catalog is present, but reserving the name only
+    /// sometimes would make adding the first skill a silent behavior flip.
+    /// </summary>
+    public static readonly FrozenSet<string> LoopReservedToolNames =
+        new[] { FileSystemSkillCatalog.LoadSkillToolName }.ToFrozenSet(StringComparer.Ordinal);
 
     // The interactive toolset: the deterministically ordered MCP catalog plus
     // load_skill appended LAST — a fixed position, so the provider-visible
