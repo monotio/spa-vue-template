@@ -18,8 +18,8 @@
       Keep all OpenTelemetry.* packages at or above these versions: 1.15.0 carried
       four published advisories (GHSA-4625-4j76-fww9 and friends).
     -->
-    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
-    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />
+    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.16.0" />
+    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.16.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.2" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.15.1" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.15.1" />
@@ -58,7 +58,7 @@
         against its exact Abstractions surface, and a split pair is the
         classic source of MissingMethodException at runtime.
     -->
-    <PackageVersion Include="Anthropic" Version="12.29.0" />
+    <PackageVersion Include="Anthropic" Version="12.29.1" />
     <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.7.0" />
     <PackageVersion Include="OpenAI" Version="2.11.0" />
     <!--
