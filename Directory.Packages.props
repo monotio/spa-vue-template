@@ -107,12 +107,16 @@
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
   </ItemGroup>
 
-  <!--
-    Trap to avoid: Microsoft.OpenApi must stay on 2.x. ASP.NET Core 10's OpenAPI
-    support compiles against the 2.x API surface, while outdated-package tooling
-    happily suggests 3.x. It is intentionally NOT listed here (it flows transitively
-    from Microsoft.AspNetCore.OpenApi); if you ever need a direct reference, pin a 2.x
-    version and configure Dependabot to ignore its majors.
-  -->
+  <ItemGroup Label="Transitive pins">
+    <!--
+      Trap to avoid: Microsoft.OpenApi must stay on 2.x. ASP.NET Core 10's OpenAPI
+      support compiles against the 2.x API surface, while outdated-package tooling
+      happily suggests 3.x. It flows transitively from Microsoft.AspNetCore.OpenApi,
+      whose 2.0.0 carries GHSA-v5pm-xwqc-g5wc (NU1903 = build error here), so the
+      transitive pin below holds a patched 2.x. Never bump to 3.x; configure
+      Dependabot to ignore its majors.
+    -->
+    <PackageVersion Include="Microsoft.OpenApi" Version="2.9.0" />
+  </ItemGroup>
 
 </Project>
