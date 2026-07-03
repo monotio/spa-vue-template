@@ -31,7 +31,9 @@ updates:
       time: "07:10"
       timezone: "Etc/UTC"
     commit-message:
-      prefix: "deps"
+      # "deps" is not a conventional-commit type — the PR Title workflow
+      # rejects it; "build(deps)" parses as type build, scope deps.
+      prefix: "build(deps)"
     open-pull-requests-limit: 10
     cooldown:
       default-days: 5
@@ -59,7 +61,12 @@ updates:
       time: "07:20"
       timezone: "Etc/UTC"
     commit-message:
-      prefix: "deps"
+      # See the npm note: "build(deps)" keeps the PR Title workflow green.
+      # NOTE: dependabot bumps Directory.Packages.props but does NOT
+      # regenerate CentralTransitive pins in dependent projects'
+      # packages.lock.json (NU1004 in locked-mode CI). Fix by pushing to the
+      # PR branch: dotnet restore --force-evaluate, commit the lockfiles.
+      prefix: "build(deps)"
     open-pull-requests-limit: 10
     cooldown:
       default-days: 5
