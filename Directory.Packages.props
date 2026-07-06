@@ -20,8 +20,8 @@
     -->
     <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.16.0" />
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.16.0" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.2" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.15.1" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.16.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.16.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.15.1" />
     <!-- Unified L1 (in-memory) + optional L2 (distributed) cache with stampede protection. -->
     <PackageVersion Include="Microsoft.Extensions.Caching.Hybrid" Version="10.7.0" />
@@ -58,7 +58,7 @@
         against its exact Abstractions surface, and a split pair is the
         classic source of MissingMethodException at runtime.
     -->
-    <PackageVersion Include="Anthropic" Version="12.30.0" />
+    <PackageVersion Include="Anthropic" Version="12.34.0" />
     <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.7.0" />
     <PackageVersion Include="OpenAI" Version="2.11.0" />
     <!--
