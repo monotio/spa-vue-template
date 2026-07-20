@@ -71,7 +71,7 @@
       projects use to exercise the endpoint at SDK level instead of wire level.
     -->
     <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="1.4.0" />
-    <PackageVersion Include="ModelContextProtocol.Core" Version="1.4.0" />
+    <PackageVersion Include="ModelContextProtocol.Core" Version="1.4.1" />
     <!-- De facto standard security headers middleware; ASP.NET Core ships none. -->
     <PackageVersion Include="NetEscapades.AspNetCore.SecurityHeaders" Version="1.3.1" />
     <PackageVersion Include="Scalar.AspNetCore" Version="2.16.2" />
