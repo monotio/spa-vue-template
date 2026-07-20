@@ -20,11 +20,11 @@
     -->
     <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.16.0" />
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.16.0" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.2" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.15.1" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.15.1" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.16.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.16.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.16.0" />
     <!-- Unified L1 (in-memory) + optional L2 (distributed) cache with stampede protection. -->
-    <PackageVersion Include="Microsoft.Extensions.Caching.Hybrid" Version="10.7.0" />
+    <PackageVersion Include="Microsoft.Extensions.Caching.Hybrid" Version="10.8.0" />
     <!--
       Agent module (VueApp1.Server/Agent, opt-in via Agent:Enabled): the
       hand-rolled loop codes against IChatClient ONLY, so this is the sole
@@ -40,7 +40,7 @@
       adapter-metadata tripwires) — a breaking bump must fail loudly in CI,
       never silently.
     -->
-    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.7.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.8.0" />
     <!--
       Agent provider adapters (AgentChatClientFactory) — the module's only
       new-publisher supply-chain event, deliberately isolated to its own PR:
@@ -58,9 +58,9 @@
         against its exact Abstractions surface, and a split pair is the
         classic source of MissingMethodException at runtime.
     -->
-    <PackageVersion Include="Anthropic" Version="12.30.0" />
-    <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.7.0" />
-    <PackageVersion Include="OpenAI" Version="2.11.0" />
+    <PackageVersion Include="Anthropic" Version="12.35.1" />
+    <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.8.0" />
+    <PackageVersion Include="OpenAI" Version="2.12.0" />
     <!--
       Official C# MCP SDK (Microsoft + Anthropic). Deliberately PINNED rather than
       floated: the MCP spec is still revising its transport layer, and this SDK is

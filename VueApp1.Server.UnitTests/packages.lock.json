@@ -22,9 +22,9 @@
       },
       "Microsoft.Extensions.AI.Abstractions": {
         "type": "Direct",
-        "requested": "[10.7.0, )",
-        "resolved": "10.7.0",
-        "contentHash": "Lf822igMm8NkTYHZhTp7kjoNYkLLEvJnX3SkG/LVBvsZHC0Y9choogHz8YtITBoy0TOylM3kVUZ6iaHf0my0ug=="
+        "requested": "[10.8.0, )",
+        "resolved": "10.8.0",
+        "contentHash": "1tJZ5sAYrEq1YjNg8GrZSL1tVodsWRfrgybGsZo5DQsWQgLZ+dSR5uFowIS6vb/9zxGBPl7xpYq53QMjNObO9w=="
       },
       "Microsoft.NET.Test.Sdk": {
         "type": "Direct",
@@ -419,10 +419,10 @@
       "vueapp1.server": {
         "type": "Project",
         "dependencies": {
-          "Anthropic": "[12.30.0, )",
+          "Anthropic": "[12.35.1, )",
           "Microsoft.AspNetCore.OpenApi": "[10.0.9, )",
           "Microsoft.AspNetCore.SpaProxy": "[10.0.9, )",
-          "Microsoft.Extensions.AI.Abstractions": "[10.7.0, )",
+          "Microsoft.Extensions.AI.Abstractions": "[10.8.0, )",
           "Microsoft.Extensions.AI.OpenAI": "[10.7.0, )",
           "Microsoft.Extensions.Caching.Hybrid": "[10.7.0, )",
           "ModelContextProtocol.AspNetCore": "[1.4.0, )",
@@ -439,9 +439,9 @@
       },
       "Anthropic": {
         "type": "CentralTransitive",
-        "requested": "[12.30.0, )",
-        "resolved": "12.30.0",
-        "contentHash": "zDR0mIDYFsVHjQyhb0gJchZ/FJQoO6767EMoUwaEe2uATWZ1o53orDESC/YPyE6Yq4glPxH7X+lLK6bozZ+oFg==",
+        "requested": "[12.35.1, )",
+        "resolved": "12.35.1",
+        "contentHash": "Ulh+9p0e2+20LCaYKbz44h7rKI3DBzJ10RrQYlfiODpbALmaABgdRbrniOjRspt9VGCBCW7f6jzt7dAZP3XdgA==",
         "dependencies": {
           "Microsoft.Extensions.AI.Abstractions": "10.5.1"
         }
