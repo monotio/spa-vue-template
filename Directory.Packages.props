@@ -40,7 +40,7 @@
       adapter-metadata tripwires) — a breaking bump must fail loudly in CI,
       never silently.
     -->
-    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.7.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.8.3" />
     <!--
       Agent provider adapters (AgentChatClientFactory) — the module's only
       new-publisher supply-chain event, deliberately isolated to its own PR:
@@ -71,7 +71,7 @@
       projects use to exercise the endpoint at SDK level instead of wire level.
     -->
     <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="1.4.0" />
-    <PackageVersion Include="ModelContextProtocol.Core" Version="1.4.0" />
+    <PackageVersion Include="ModelContextProtocol.Core" Version="2.0.0" />
     <!-- De facto standard security headers middleware; ASP.NET Core ships none. -->
     <PackageVersion Include="NetEscapades.AspNetCore.SecurityHeaders" Version="1.3.1" />
     <PackageVersion Include="Scalar.AspNetCore" Version="2.16.2" />
