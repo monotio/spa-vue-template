@@ -22,9 +22,9 @@
       },
       "Microsoft.Extensions.AI.Abstractions": {
         "type": "Direct",
-        "requested": "[10.7.0, )",
-        "resolved": "10.7.0",
-        "contentHash": "Lf822igMm8NkTYHZhTp7kjoNYkLLEvJnX3SkG/LVBvsZHC0Y9choogHz8YtITBoy0TOylM3kVUZ6iaHf0my0ug=="
+        "requested": "[10.8.3, )",
+        "resolved": "10.8.3",
+        "contentHash": "K0B05oApxmviWalNHPMBBcRC7erKiDATz3ENNR/jqTR9JwIwLRefgDhj2jCRwL1aca99pXUe0qyQC73/xIuZig=="
       },
       "Microsoft.NET.Test.Sdk": {
         "type": "Direct",
@@ -38,12 +38,12 @@
       },
       "ModelContextProtocol.Core": {
         "type": "Direct",
-        "requested": "[1.4.0, )",
-        "resolved": "1.4.0",
-        "contentHash": "6ZJFQTgYwdu0IacUUTNExAY2Z+JFuTd10CPeORalQtuGPY4hdUqq0BXxTpNEP0n7ajruNsGXyCKQLP0erIZmog==",
+        "requested": "[2.1.0, )",
+        "resolved": "2.1.0",
+        "contentHash": "cU/urrhRxE4/iSyBIJI7QOaFqSP1FOEnwEHsct9n6t6/XluCAFD9iqnrPkBAsEYr+f/G4tVQ21U+6wN/6fQvOg==",
         "dependencies": {
-          "Microsoft.Extensions.AI.Abstractions": "10.5.2",
-          "Microsoft.Extensions.Logging.Abstractions": "10.0.7"
+          "Microsoft.Extensions.AI.Abstractions": "10.8.3",
+          "Microsoft.Extensions.Logging.Abstractions": "10.0.10"
         }
       },
       "Moq": {
@@ -149,8 +149,8 @@
       },
       "Microsoft.Extensions.DependencyInjection.Abstractions": {
         "type": "Transitive",
-        "resolved": "10.0.9",
-        "contentHash": "g41l/30G3K4B/d/L8kjux0+30e27c8D0FVQ/PFCpbekgfDpj9mnDhieP67EqXWvl1EWNeZh2rpR4F5B/jcDOHA=="
+        "resolved": "10.0.10",
+        "contentHash": "z/2xXlFw2aLGjHyEm6E0tQ+In6VfzQzTrtArbQ2c0TQE16ZbyDCMGPvaUT9I0s8rgy9sRWlU2P9waW37qV04qA=="
       },
       "Microsoft.Extensions.Diagnostics.Abstractions": {
         "type": "Transitive",
@@ -193,10 +193,10 @@
       },
       "Microsoft.Extensions.Logging.Abstractions": {
         "type": "Transitive",
-        "resolved": "10.0.9",
-        "contentHash": "9S/DFt4cohlMPpzIxjG6kk0L8MuN2vDm9pbMCulxtJzzk82oJHVLBd8vuQxaPskaYQwKqmFmbannf5eoChgjYg==",
+        "resolved": "10.0.10",
+        "contentHash": "zkFxGYUvdxAvIKTyXHrmW+Sux53D4SezD9dMyZ6hrwwzPQJNuwCRy1f5W7AvYTqacEGhWF2XderRQG1OvbV8og==",
         "dependencies": {
-          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.9"
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.10"
         }
       },
       "Microsoft.Extensions.Logging.Configuration": {
@@ -422,7 +422,7 @@
           "Anthropic": "[12.30.0, )",
           "Microsoft.AspNetCore.OpenApi": "[10.0.9, )",
           "Microsoft.AspNetCore.SpaProxy": "[10.0.9, )",
-          "Microsoft.Extensions.AI.Abstractions": "[10.7.0, )",
+          "Microsoft.Extensions.AI.Abstractions": "[10.8.3, )",
           "Microsoft.Extensions.AI.OpenAI": "[10.7.0, )",
           "Microsoft.Extensions.Caching.Hybrid": "[10.7.0, )",
           "ModelContextProtocol.AspNetCore": "[1.4.0, )",
